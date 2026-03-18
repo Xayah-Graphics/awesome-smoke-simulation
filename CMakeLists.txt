@@ -31,3 +31,4 @@ set(CMAKE_CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 # ============================================================================
 add_subdirectory(app/vulkan-visualizer)
 add_subdirectory(001-stable-fluids)
+add_subdirectory(app)
