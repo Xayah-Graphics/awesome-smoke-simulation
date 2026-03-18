@@ -6,3 +6,4 @@ build*
 data/
 AGENTS.md
 rebuild.bat
+/imgui.ini

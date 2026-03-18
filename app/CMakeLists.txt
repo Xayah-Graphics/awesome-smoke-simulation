@@ -38,7 +38,13 @@ add_custom_target(smoke-visualizer-shaders DEPENDS ${SMOKE_SIM_SHADER_OUTPUTS})
 
 add_executable(
         smoke-visualizer
+        app.cpp
         main.cpp
+)
+
+target_sources(smoke-visualizer
+        PUBLIC FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        app.ixx
 )
 
 add_dependencies(smoke-visualizer smoke-visualizer-shaders)

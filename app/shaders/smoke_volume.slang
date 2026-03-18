@@ -91,7 +91,7 @@ VSOut vs_main(uint vertexId : SV_VertexID)
  [shader("fragment")]
 float4 fs_main(VSOut input) : SV_Target
 {
-    float2 uv = input.ndc;
+    float2 uv = float2(input.ndc.x, -input.ndc.y);
     float3 rayDir = normalize(
         pc.forward.xyz +
         uv.x * pc.right.xyz * pc.params0.x * pc.params0.y +
