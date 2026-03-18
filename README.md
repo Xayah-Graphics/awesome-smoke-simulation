@@ -1,1 +1,1 @@
-# Stable Fluids
+# Awesome Smoke Simulation
