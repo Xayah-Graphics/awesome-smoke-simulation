@@ -162,6 +162,10 @@ namespace app {
             const auto now = std::chrono::steady_clock::now();
             const float dt_seconds = std::chrono::duration<float>(now - last_frame_time_).count();
             last_frame_time_ = now;
+            if (dt_seconds > 0.0f) {
+                const float instantaneous_fps = 1.0f / dt_seconds;
+                render_fps_ = render_fps_ > 0.0f ? std::lerp(render_fps_, instantaneous_fps, 0.1f) : instantaneous_fps;
+            }
 
             if (sctx_.resize_requested) {
                 recreate_swapchain();
@@ -170,23 +174,14 @@ namespace app {
             vk::imgui::begin_frame();
             collect_camera_input(dt_seconds);
 
-            const bool placement_mode_changed = draw_ui();
-            if (placement_mode_changed) {
+            const bool reset_requested = draw_ui();
+            if (reset_requested) {
                 recreate_simulation();
-                ui_.step_once = false;
-                vk::imgui::end_frame();
-                continue;
             }
 
-            if (ui_.reset_fields) {
-                recreate_simulation();
-                ui_.reset_fields = false;
-                ui_.step_once = false;
-                vk::imgui::end_frame();
-                continue;
+            if (!reset_requested) {
+                step_simulation();
             }
-
-            step_simulation();
             ui_.step_once = false;
             update_ready_snapshots();
             render_frame();
@@ -257,6 +252,8 @@ namespace app {
     }
 
     void SmokeApp::destroy_simulation() {
+        vkctx_.device.waitIdle();
+
         if (sim_.snapshot_stream != nullptr) {
             cudaStreamSynchronize(sim_.snapshot_stream);
         }
@@ -456,41 +453,27 @@ namespace app {
         camera_state.orbit.pitch_rad = -0.43633231299f;
         camera_.set_state(camera_state);
 
-        const size_t scalar_count = static_cast<size_t>(sim_.field_bytes / sizeof(float));
-        std::vector<float> filled_density(scalar_count, ui_.placement_debug_mode ? 1.0f : 0.0f);
-        std::vector<float> zero_field(scalar_count, 0.0f);
+        StableFluidsDensitySplatDesc density_splat{};
+        density_splat.center_x = ui_.source_x;
+        density_splat.center_y = ui_.source_y;
+        density_splat.center_z = ui_.source_z;
+        density_splat.radius = ui_.density_radius;
+        density_splat.amount = ui_.density_amount;
+        stable_ok(stable_fluids_fields_add_density_splat_async(sim_.context, &sim_.fields, &density_splat, sim_.sim_stream), "stable_fluids_fields_add_density_splat_async", sim_.context);
 
-        cuda_ok(cudaMemcpyAsync(sim_.density, filled_density.data(), sim_.field_bytes, cudaMemcpyHostToDevice, sim_.sim_stream), "cudaMemcpyAsync initial density");
-        cuda_ok(cudaMemcpyAsync(sim_.velocity_x, zero_field.data(), sim_.field_bytes, cudaMemcpyHostToDevice, sim_.sim_stream), "cudaMemcpyAsync initial velocity_x");
-        cuda_ok(cudaMemcpyAsync(sim_.velocity_y, zero_field.data(), sim_.field_bytes, cudaMemcpyHostToDevice, sim_.sim_stream), "cudaMemcpyAsync initial velocity_y");
-        cuda_ok(cudaMemcpyAsync(sim_.velocity_z, zero_field.data(), sim_.field_bytes, cudaMemcpyHostToDevice, sim_.sim_stream), "cudaMemcpyAsync initial velocity_z");
-        cuda_ok(cudaStreamSynchronize(sim_.sim_stream), "cudaStreamSynchronize initial field upload");
-
-        if (!ui_.placement_debug_mode) {
-            StableFluidsDensitySplatDesc density_splat{};
-            density_splat.center_x = ui_.source_x;
-            density_splat.center_y = ui_.source_y;
-            density_splat.center_z = ui_.source_z;
-            density_splat.radius = ui_.density_radius;
-            density_splat.amount = ui_.density_amount;
-            stable_ok(stable_fluids_fields_add_density_splat_async(sim_.context, &sim_.fields, &density_splat, sim_.sim_stream), "stable_fluids_fields_add_density_splat_async", sim_.context);
-
-            StableFluidsForceSplatDesc force_splat{};
-            force_splat.center_x = ui_.source_x;
-            force_splat.center_y = ui_.source_y;
-            force_splat.center_z = ui_.source_z;
-            force_splat.radius = ui_.force_radius;
-            force_splat.force_x = ui_.force_x;
-            force_splat.force_y = ui_.force_y;
-            force_splat.force_z = ui_.force_z;
-            stable_ok(stable_fluids_fields_add_force_splat_async(sim_.context, &sim_.fields, &force_splat, sim_.sim_stream), "stable_fluids_fields_add_force_splat_async", sim_.context);
-            stable_ok(stable_fluids_fields_step_async(sim_.context, &sim_.fields, sim_.sim_stream), "stable_fluids_fields_step_async", sim_.context);
-            cuda_ok(cudaEventRecord(sim_.step_complete_event, sim_.sim_stream), "cudaEventRecord initial_step_complete_event");
-            cuda_ok(cudaStreamWaitEvent(sim_.snapshot_stream, sim_.step_complete_event, 0), "cudaStreamWaitEvent initial_snapshot");
-            stable_ok(stable_fluids_fields_snapshot_density_async(sim_.context, &sim_.fields, snapshot_slots_[0].buffer_view, sim_.snapshot_stream), "stable_fluids_fields_snapshot_density_async", sim_.context);
-        } else {
-            cuda_ok(cudaMemcpyAsync(snapshot_slots_[0].cuda_ptr, filled_density.data(), sim_.field_bytes, cudaMemcpyHostToDevice, sim_.snapshot_stream), "cudaMemcpyAsync placement snapshot");
-        }
+        StableFluidsForceSplatDesc force_splat{};
+        force_splat.center_x = ui_.source_x;
+        force_splat.center_y = ui_.source_y;
+        force_splat.center_z = ui_.source_z;
+        force_splat.radius = ui_.force_radius;
+        force_splat.force_x = ui_.force_x;
+        force_splat.force_y = ui_.force_y;
+        force_splat.force_z = ui_.force_z;
+        stable_ok(stable_fluids_fields_add_force_splat_async(sim_.context, &sim_.fields, &force_splat, sim_.sim_stream), "stable_fluids_fields_add_force_splat_async", sim_.context);
+        stable_ok(stable_fluids_fields_step_async(sim_.context, &sim_.fields, sim_.sim_stream), "stable_fluids_fields_step_async", sim_.context);
+        cuda_ok(cudaEventRecord(sim_.step_complete_event, sim_.sim_stream), "cudaEventRecord initial_step_complete_event");
+        cuda_ok(cudaStreamWaitEvent(sim_.snapshot_stream, sim_.step_complete_event, 0), "cudaStreamWaitEvent initial_snapshot");
+        stable_ok(stable_fluids_fields_snapshot_density_async(sim_.context, &sim_.fields, snapshot_slots_[0].buffer_view, sim_.snapshot_stream), "stable_fluids_fields_snapshot_density_async", sim_.context);
 
         const uint64_t initial_generation = sim_.snapshot_generation + 1;
         cudaExternalSemaphoreSignalParams initial_signal_params{};
@@ -568,24 +551,26 @@ namespace app {
 
     bool SmokeApp::draw_ui() {
         ImGui::Begin("Smoke Control");
-        const bool placement_mode_changed = ImGui::Checkbox("Placement Debug Mode", &ui_.placement_debug_mode);
-        if (ui_.placement_debug_mode) {
-            ImGui::TextUnformatted("Simulation disabled. Rendering a fully filled debug volume.");
-        }
         ImGui::Checkbox("Pause Simulation", &ui_.paused);
         if (ImGui::Button("Single Step")) {
             ui_.step_once = true;
         }
-        if (ImGui::Button("Reset Fields")) {
-            ui_.reset_fields = true;
-        }
+        const bool reset_requested = ImGui::Button("Reset Fields");
         ImGui::Separator();
         ImGui::SliderInt("Sim Steps / Frame", &ui_.sim_steps_per_frame, 1, 8);
         ImGui::SliderInt("Snapshot Interval", &ui_.snapshot_interval, 1, 8);
         ImGui::SliderInt("March Steps", &ui_.march_steps, 24, 192);
+        ImGui::SliderInt("Shadow Steps", &ui_.shadow_steps, 4, 48);
         ImGui::SliderFloat("Density Scale", &ui_.density_scale, 0.05f, 4.0f, "%.2f");
         ImGui::SliderFloat("Absorption", &ui_.absorption, 0.1f, 6.0f, "%.2f");
         ImGui::ColorEdit3("Smoke Color", &ui_.smoke_r);
+        ImGui::SliderFloat("Light X", &ui_.light_x, -1.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Light Y", &ui_.light_y, -1.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Light Z", &ui_.light_z, -1.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Light Intensity", &ui_.light_intensity, 0.0f, 6.0f, "%.2f");
+        ImGui::SliderFloat("Ambient Light", &ui_.ambient_light, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Shadow Strength", &ui_.shadow_strength, 0.1f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Phase G", &ui_.phase_g, -0.3f, 0.8f, "%.2f");
         ImGui::Separator();
         ImGui::Checkbox("Emit Density", &ui_.emit_density);
         ImGui::Checkbox("Emit Force", &ui_.emit_force);
@@ -603,11 +588,23 @@ namespace app {
         ImGui::Text("Active snapshot: %d", sim_.active_snapshot_slot);
         ImGui::Text("Snapshot generation: %llu", static_cast<unsigned long long>(sim_.active_snapshot_generation));
         ImGui::End();
-        return placement_mode_changed;
+
+        if (const ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 12.0f, viewport->Pos.y + 12.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.35f);
+            ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs;
+            ImGui::Begin("Render Stats Overlay", nullptr, overlay_flags);
+            ImGui::Text("Render: %.1f FPS", render_fps_);
+            ImGui::End();
+        }
+
+        return reset_requested;
     }
 
     void SmokeApp::step_simulation() {
-        const bool run_simulation = !ui_.placement_debug_mode && (!ui_.paused || ui_.step_once);
+        const bool run_simulation = !ui_.paused || ui_.step_once;
         if (!run_simulation) {
             return;
         }
@@ -759,6 +756,7 @@ namespace app {
         if (sim_.active_snapshot_slot >= 0) {
             const auto& matrices = camera_.matrices();
             const float half_fov_tan = std::tan(camera_.config().fov_y_rad * 0.5f);
+            const vk::math::vec3 light_dir = vk::math::normalize(vk::math::vec3{ui_.light_x, ui_.light_y, ui_.light_z, 0.0f});
             detail::PushConstants push{};
             push.eye = {matrices.eye.x, matrices.eye.y, matrices.eye.z, 1.0f};
             push.right = {matrices.right.x, matrices.right.y, matrices.right.z, 0.0f};
@@ -772,6 +770,8 @@ namespace app {
                 0.0f,
             };
             push.smoke_color = {ui_.smoke_r, ui_.smoke_g, ui_.smoke_b, 1.0f};
+            push.light_dir = {light_dir.x, light_dir.y, light_dir.z, ui_.light_intensity};
+            push.lighting_params = {ui_.ambient_light, ui_.shadow_strength, ui_.phase_g, 0.0f};
             push.params0 = {
                 static_cast<float>(sc_.extent.width) / static_cast<float>(std::max(sc_.extent.height, 1u)),
                 half_fov_tan,
@@ -783,6 +783,12 @@ namespace app {
                 static_cast<uint32_t>(sim_.desc.ny),
                 static_cast<uint32_t>(sim_.desc.nz),
                 static_cast<uint32_t>(ui_.march_steps),
+            };
+            push.params2 = {
+                static_cast<uint32_t>(ui_.shadow_steps),
+                0u,
+                0u,
+                0u,
             };
 
             cmd.bindPipeline(PipelineBindPoint::eGraphics, *smoke_pipeline_.pipeline);

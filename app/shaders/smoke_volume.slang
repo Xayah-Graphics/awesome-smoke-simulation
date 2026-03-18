@@ -7,8 +7,11 @@ struct PushConstants
     float4 volumeMin;
     float4 volumeMax;
     float4 smokeColor;
+    float4 lightDir;
+    float4 lightingParams;
     float4 params0;
     uint4 params1;
+    uint4 params2;
 };
 
 struct VSOut
@@ -72,6 +75,46 @@ float2 intersect_aabb(float3 rayOrigin, float3 rayDir, float3 boundsMin, float3 
     return float2(entry, exit);
 }
 
+float phase_hg(float cosTheta, float g)
+{
+    float gg = g * g;
+    float denom = max(1.0 + gg - 2.0 * g * cosTheta, 1.0e-4);
+    return (1.0 - gg) / (12.566370614359172 * denom * sqrt(denom));
+}
+
+float march_light_transmittance(float3 worldPos, float3 lightDir, float densityScale, float absorption)
+{
+    float2 lightHit = intersect_aabb(worldPos + lightDir * 1.0e-3, lightDir, pc.volumeMin.xyz, pc.volumeMax.xyz);
+    float lightStart = max(lightHit.x, 0.0);
+    float lightEnd = lightHit.y;
+    if (lightEnd <= lightStart)
+    {
+        return 1.0;
+    }
+
+    uint shadowSteps = max(pc.params2.x, 1u);
+    float shadowStepLength = (lightEnd - lightStart) / shadowSteps;
+    float shadowTransmittance = 1.0;
+
+    [loop]
+    for (uint i = 0; i < shadowSteps; ++i)
+    {
+        float travel = lightStart + (i + 0.5) * shadowStepLength;
+        float3 shadowPos = worldPos + lightDir * travel;
+        float3 shadowUVW = (shadowPos - pc.volumeMin.xyz) / max(pc.volumeMax.xyz - pc.volumeMin.xyz, 1.0e-5.xxx);
+        float shadowDensity = sample_density(shadowUVW) * densityScale;
+        float shadowExtinction = shadowDensity * absorption * pc.lightingParams.y * shadowStepLength;
+        shadowTransmittance *= exp(-shadowExtinction);
+
+        if (shadowTransmittance < 0.01)
+        {
+            return 0.0;
+        }
+    }
+
+    return shadowTransmittance;
+}
+
  [shader("vertex")]
 VSOut vs_main(uint vertexId : SV_VertexID)
 {
@@ -116,6 +159,7 @@ float4 fs_main(VSOut input) : SV_Target
     uint steps = max(pc.params1.w, 1u);
     float stepLength = distanceInside / steps;
     float transmittance = 1.0;
+    float3 lightDir = normalize(pc.lightDir.xyz);
 
     [loop]
     for (uint i = 0; i < steps; ++i)
@@ -124,10 +168,19 @@ float4 fs_main(VSOut input) : SV_Target
         float3 worldPos = rayOrigin + travel * rayDir;
         float3 uvw = (worldPos - pc.volumeMin.xyz) / max(pc.volumeMax.xyz - pc.volumeMin.xyz, 1.0e-5.xxx);
         float density = sample_density(uvw) * pc.params0.z;
+        if (density < 1.0e-4)
+        {
+            continue;
+        }
+
         float extinction = density * pc.params0.w * stepLength;
         float absorb = exp(-extinction);
         float scatter = 1.0 - absorb;
-        color += transmittance * scatter * pc.smokeColor.rgb;
+        float lightTransmittance = march_light_transmittance(worldPos, lightDir, pc.params0.z, pc.params0.w);
+        float cosTheta = dot(lightDir, -rayDir);
+        float phase = phase_hg(cosTheta, pc.lightingParams.z) * 12.566370614359172;
+        float lighting = pc.lightingParams.x + pc.lightDir.w * lightTransmittance * phase;
+        color += transmittance * scatter * lighting * pc.smokeColor.rgb;
         transmittance *= absorb;
 
         if (transmittance < 0.01)

@@ -42,17 +42,18 @@ namespace app::detail {
         vk::math::vec4 volume_min{};
         vk::math::vec4 volume_max{};
         vk::math::vec4 smoke_color{};
+        vk::math::vec4 light_dir{};
+        vk::math::vec4 lighting_params{};
         vk::math::vec4 params0{};
         uvec4 params1{};
+        uvec4 params2{};
     };
 
     struct UiState {
-        bool placement_debug_mode = false;
         bool paused = false;
         bool step_once = false;
         bool emit_density = true;
         bool emit_force = true;
-        bool reset_fields = false;
         int sim_steps_per_frame = 1;
         int snapshot_interval = 3;
         int march_steps = 64;
@@ -67,6 +68,14 @@ namespace app::detail {
         float smoke_r = 0.92f;
         float smoke_g = 0.94f;
         float smoke_b = 0.98f;
+        float light_x = -0.55f;
+        float light_y = 0.85f;
+        float light_z = 0.35f;
+        float light_intensity = 1.85f;
+        float ambient_light = 0.18f;
+        float shadow_strength = 1.35f;
+        float phase_g = 0.15f;
+        int shadow_steps = 12;
         float source_x = 64.0f;
         float source_y = 28.0f;
         float source_z = 64.0f;
@@ -160,6 +169,7 @@ export namespace app {
         std::vector<vk::raii::DescriptorSet> density_descriptor_sets_{};
         vk::raii::ShaderModule smoke_shader_module_{nullptr};
         vk::pipeline::GraphicsPipeline smoke_pipeline_{};
+        float render_fps_ = 0.0f;
         uint32_t frame_index_ = 0;
         std::chrono::steady_clock::time_point last_frame_time_ = std::chrono::steady_clock::now();
     };
