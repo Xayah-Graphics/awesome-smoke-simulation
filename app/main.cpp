@@ -212,6 +212,8 @@ int main() {
     ui.paused = false;
     ui.absorption = 1.4f;
     ui.density_scale = 1.0f;
+    ui.snapshot_interval = 3;
+    ui.march_steps = 64;
     ui.smoke_r = 0.92f;
     ui.smoke_g = 0.94f;
     ui.smoke_b = 0.98f;
@@ -221,14 +223,14 @@ int main() {
 
     SimulationState sim{};
     sim.desc = stable_fluids_context_desc_default();
-    sim.desc.nx = 128;
-    sim.desc.ny = 128;
-    sim.desc.nz = 128;
+    sim.desc.nx = 96;
+    sim.desc.ny = 96;
+    sim.desc.nz = 96;
     sim.desc.dt = 1.0f / 90.0f;
     sim.desc.viscosity = 0.00012f;
     sim.desc.diffusion = 0.00003f;
-    sim.desc.diffuse_iterations = 20;
-    sim.desc.pressure_iterations = 64;
+    sim.desc.diffuse_iterations = 8;
+    sim.desc.pressure_iterations = 24;
     sim.desc.pressure_tolerance = 1.0e-5f;
 
     std::vector<SnapshotSlot> snapshot_slots;
