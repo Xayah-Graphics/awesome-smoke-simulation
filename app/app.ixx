@@ -1,15 +1,7 @@
 module;
 
 #include <GLFW/glfw3.h>
-#include <cuda_runtime.h>
-#if defined(_WIN32)
-#define NOMINMAX
-#define VK_USE_PLATFORM_WIN32_KHR
-#include <windows.h>
-#endif
 #include <vulkan/vulkan_raii.hpp>
-
-#include "../001-stable-fluids/stable_fluids.h"
 
 export module app;
 
@@ -22,10 +14,7 @@ import vk.math;
 import vk.pipeline;
 import vk.swapchain;
 
-namespace app::detail {
-
-    constexpr uint32_t frames_in_flight = 2;
-    constexpr uint32_t snapshot_slot_count = 4;
+export namespace app {
 
     struct alignas(16) uvec4 {
         uint32_t x;
@@ -49,20 +38,9 @@ namespace app::detail {
         uvec4 params2{};
     };
 
-    struct UiState {
-        bool paused = false;
-        bool step_once = false;
-        bool emit_density = true;
-        bool emit_force = true;
-        int sim_steps_per_frame = 1;
-        int snapshot_interval = 3;
+    struct RenderSettings {
         int march_steps = 64;
-        float density_radius = 5.0f;
-        float density_amount = 1.2f;
-        float force_radius = 6.0f;
-        float force_x = 0.0f;
-        float force_y = 1.8f;
-        float force_z = 0.0f;
+        int shadow_steps = 12;
         float density_scale = 1.0f;
         float absorption = 1.4f;
         float smoke_r = 0.92f;
@@ -75,100 +53,72 @@ namespace app::detail {
         float ambient_light = 0.18f;
         float shadow_strength = 1.35f;
         float phase_g = 0.15f;
-        int shadow_steps = 12;
-        float source_x = 64.0f;
-        float source_y = 28.0f;
-        float source_z = 64.0f;
     };
 
-    struct WindowState {
-        bool* resize_requested = nullptr;
-        float scroll = 0.0f;
-        bool first_mouse = true;
-        double last_x = 0.0;
-        double last_y = 0.0;
+    struct FrameInfo {
+        float dt_seconds = 0.0f;
+        float render_fps = 0.0f;
     };
 
-    struct SimulationState {
-        StableFluidsContext* context = nullptr;
-        StableFluidsFieldSetDesc fields{};
-        StableFluidsContextDesc desc{};
-        float* density = nullptr;
-        float* velocity_x = nullptr;
-        float* velocity_y = nullptr;
-        float* velocity_z = nullptr;
-        cudaStream_t sim_stream = nullptr;
-        cudaStream_t snapshot_stream = nullptr;
-        cudaEvent_t step_complete_event = nullptr;
-        uint64_t field_bytes = 0;
-        uint64_t snapshot_generation = 0;
-        uint64_t submit_serial = 0;
-        uint32_t steps_since_snapshot = 0;
-        int active_snapshot_slot = -1;
-        uint64_t active_snapshot_generation = 0;
-    };
-
-    struct SnapshotSlot {
-        vk::raii::Buffer buffer{nullptr};
-        vk::raii::DeviceMemory memory{nullptr};
-        vk::raii::Semaphore timeline_semaphore{nullptr};
+    struct VolumeFieldView {
         vk::DescriptorSet descriptor_set{nullptr};
-        StableFluidsBufferView buffer_view{};
-        cudaExternalMemory_t external_memory = nullptr;
-        cudaExternalSemaphore_t external_semaphore = nullptr;
-        void* cuda_ptr = nullptr;
-        bool pending = false;
-        uint64_t pending_generation = 0;
+        vk::Semaphore timeline_semaphore{nullptr};
         uint64_t ready_generation = 0;
-        uint64_t last_used_submit_serial = 0;
+        uint32_t nx = 0;
+        uint32_t ny = 0;
+        uint32_t nz = 0;
+        float cell_size = 1.0f;
     };
 
-} // namespace app::detail
-
-export namespace app {
-
-    class SmokeApp {
+    class FieldRendererApp {
     public:
-        SmokeApp();
-        ~SmokeApp();
+        FieldRendererApp();
+        ~FieldRendererApp();
 
-        SmokeApp(const SmokeApp&) = delete;
-        SmokeApp& operator=(const SmokeApp&) = delete;
-        SmokeApp(SmokeApp&&) noexcept = default;
-        SmokeApp& operator=(SmokeApp&&) noexcept = default;
+        FieldRendererApp(const FieldRendererApp&) = delete;
+        FieldRendererApp& operator=(const FieldRendererApp&) = delete;
+        FieldRendererApp(FieldRendererApp&&) noexcept = default;
+        FieldRendererApp& operator=(FieldRendererApp&&) noexcept = default;
 
-        int run();
+        [[nodiscard]] bool should_close() const;
+        FrameInfo begin_frame();
+        void draw_renderer_ui(const std::optional<VolumeFieldView>& field);
+        bool render_frame(const std::optional<VolumeFieldView>& field);
+        void frame_volume(const VolumeFieldView& field);
+
+        [[nodiscard]] RenderSettings& render_settings();
+        [[nodiscard]] const RenderSettings& render_settings() const;
+        [[nodiscard]] const vk::context::VulkanContext& vk_context() const;
+        [[nodiscard]] uint32_t frames_in_flight() const;
+        [[nodiscard]] std::vector<vk::raii::DescriptorSet> allocate_density_descriptor_sets(uint32_t count);
 
     private:
-        void cuda_ok(cudaError_t status, const char* what) const;
-        void stable_ok(int32_t code, const char* what, const StableFluidsContext* context = nullptr) const;
-        static StableFluidsBufferView make_device_buffer_view(void* data, uint64_t size_bytes);
-        void destroy_snapshot_slots();
-        void destroy_simulation();
-        void recreate_simulation();
         void recreate_swapchain();
         void collect_camera_input(float dt_seconds);
-        bool draw_ui();
-        void step_simulation();
-        void update_ready_snapshots();
-        void render_frame();
+
+        static constexpr uint32_t frames_in_flight_value_ = 2;
+
+        struct WindowState {
+            bool* resize_requested = nullptr;
+            float scroll = 0.0f;
+            bool first_mouse = true;
+            double last_x = 0.0;
+            double last_y = 0.0;
+        };
 
         vk::context::VulkanContext vkctx_{};
         vk::context::SurfaceContext sctx_{};
         GLFWwindow* window_ = nullptr;
-        detail::WindowState window_state_{};
+        WindowState window_state_{};
         vk::swapchain::Swapchain sc_{};
         vk::frame::FrameSystem frames_{};
         vk::imgui::ImGuiSystem imgui_sys_{};
         vk::camera::Camera camera_{};
-        detail::UiState ui_{};
-        detail::SimulationState sim_{};
-        std::vector<detail::SnapshotSlot> snapshot_slots_{};
         vk::raii::DescriptorSetLayout density_set_layout_{nullptr};
         vk::raii::DescriptorPool density_descriptor_pool_{nullptr};
-        std::vector<vk::raii::DescriptorSet> density_descriptor_sets_{};
         vk::raii::ShaderModule smoke_shader_module_{nullptr};
         vk::pipeline::GraphicsPipeline smoke_pipeline_{};
+        RenderSettings render_{};
         float render_fps_ = 0.0f;
         uint32_t frame_index_ = 0;
         std::chrono::steady_clock::time_point last_frame_time_ = std::chrono::steady_clock::now();

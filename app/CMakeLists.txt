@@ -50,7 +50,7 @@ target_sources(smoke-visualizer
 add_dependencies(smoke-visualizer smoke-visualizer-shaders)
 
 target_compile_features(smoke-visualizer PRIVATE cxx_std_23)
-target_include_directories(smoke-visualizer PRIVATE ${CMAKE_SOURCE_DIR}/001-stable-fluids/include)
+target_include_directories(smoke-visualizer PRIVATE ${CMAKE_SOURCE_DIR}/001-stable-fluids)
 target_compile_definitions(smoke-visualizer PRIVATE SMOKE_SIM_SHADER_DIR="${SMOKE_VIS_SHADER_DIR}")
 target_link_libraries(smoke-visualizer PRIVATE vk-core::vk-core stable-fluids CUDA::cudart)
 
