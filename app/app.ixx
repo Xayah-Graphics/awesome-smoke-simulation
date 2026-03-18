@@ -9,7 +9,7 @@ module;
 #endif
 #include <vulkan/vulkan_raii.hpp>
 
-#include "stable_fluids.h"
+#include "../001-stable-fluids/stable_fluids.h"
 
 export module app;
 
