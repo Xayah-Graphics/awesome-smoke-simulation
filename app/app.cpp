@@ -52,35 +52,35 @@ namespace app {
         camera_.set_config(camera_config);
         camera_.home();
 
-        DescriptorSetLayoutBinding density_binding{
+        DescriptorSetLayoutBinding field_binding{
             .binding = 0,
             .descriptorType = DescriptorType::eStorageBuffer,
             .descriptorCount = 1,
             .stageFlags = ShaderStageFlagBits::eFragment,
         };
-        DescriptorSetLayoutCreateInfo density_layout_ci{
+        DescriptorSetLayoutCreateInfo field_layout_ci{
             .bindingCount = 1,
-            .pBindings = &density_binding,
+            .pBindings = &field_binding,
         };
-        density_set_layout_ = raii::DescriptorSetLayout{vkctx_.device, density_layout_ci};
+        field_set_layout_ = raii::DescriptorSetLayout{vkctx_.device, field_layout_ci};
 
-        DescriptorPoolSize density_pool_size{
+        DescriptorPoolSize field_pool_size{
             .type = DescriptorType::eStorageBuffer,
             .descriptorCount = 128,
         };
-        DescriptorPoolCreateInfo density_pool_ci{
+        DescriptorPoolCreateInfo field_pool_ci{
             .flags = DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets = 128,
             .poolSizeCount = 1,
-            .pPoolSizes = &density_pool_size,
+            .pPoolSizes = &field_pool_size,
         };
-        density_descriptor_pool_ = raii::DescriptorPool{vkctx_.device, density_pool_ci};
+        field_descriptor_pool_ = raii::DescriptorPool{vkctx_.device, field_pool_ci};
 
         const std::filesystem::path shader_path = std::filesystem::path(SMOKE_SIM_SHADER_DIR) / "smoke_volume.spv";
         const auto smoke_shader_spv = pipeline::read_file_bytes(shader_path.string());
         smoke_shader_module_ = pipeline::load_shader_module(vkctx_.device, smoke_shader_spv);
 
-        std::array<DescriptorSetLayout, 1> pipeline_set_layouts{*density_set_layout_};
+        std::array<DescriptorSetLayout, 1> pipeline_set_layouts{*field_set_layout_};
         pipeline::GraphicsPipelineDesc pipeline_desc{};
         pipeline_desc.color_format = sc_.format;
         pipeline_desc.use_depth = false;
@@ -132,20 +132,47 @@ namespace app {
         return FrameInfo{.dt_seconds = dt_seconds, .render_fps = render_fps_};
     }
 
-    void FieldRendererApp::draw_renderer_ui(const std::optional<VolumeFieldView>& field) {
+    void FieldRendererApp::draw_renderer_ui(const std::optional<ScalarFieldView>& field) {
+        const bool allow_smoke_mode = field && field->semantic == FieldSemantic::Density;
+        if (!allow_smoke_mode && render_.mode == RenderMode::Smoke) {
+            render_.mode = RenderMode::Scalar;
+        }
+
         ImGui::Begin("Renderer");
+        if (field) {
+            ImGui::Text("Field: %.*s", static_cast<int>(field->label.size()), field->label.data());
+        } else {
+            ImGui::TextUnformatted("Field: None");
+        }
+        if (allow_smoke_mode) {
+            int mode = static_cast<int>(render_.mode);
+            const char* labels[] = {"Smoke", "Scalar"};
+            if (ImGui::Combo("View Mode", &mode, labels, 2)) {
+                render_.mode = static_cast<RenderMode>(mode);
+            }
+        } else {
+            ImGui::TextUnformatted("View Mode: Scalar");
+        }
         ImGui::SliderInt("March Steps", &render_.march_steps, 24, 192);
-        ImGui::SliderInt("Shadow Steps", &render_.shadow_steps, 4, 48);
         ImGui::SliderFloat("Density Scale", &render_.density_scale, 0.05f, 4.0f, "%.2f");
-        ImGui::SliderFloat("Absorption", &render_.absorption, 0.1f, 6.0f, "%.2f");
-        ImGui::ColorEdit3("Smoke Color", &render_.smoke_r);
-        ImGui::SliderFloat("Light X", &render_.light_x, -1.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Light Y", &render_.light_y, -1.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Light Z", &render_.light_z, -1.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Light Intensity", &render_.light_intensity, 0.0f, 6.0f, "%.2f");
-        ImGui::SliderFloat("Ambient Light", &render_.ambient_light, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Shadow Strength", &render_.shadow_strength, 0.1f, 4.0f, "%.2f");
-        ImGui::SliderFloat("Phase G", &render_.phase_g, -0.3f, 0.8f, "%.2f");
+        if (render_.mode == RenderMode::Smoke) {
+            ImGui::SliderInt("Shadow Steps", &render_.shadow_steps, 4, 48);
+            ImGui::SliderFloat("Absorption", &render_.absorption, 0.1f, 6.0f, "%.2f");
+            ImGui::ColorEdit3("Smoke Color", &render_.smoke_r);
+            ImGui::SliderFloat("Light X", &render_.light_x, -1.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Light Y", &render_.light_y, -1.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Light Z", &render_.light_z, -1.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Light Intensity", &render_.light_intensity, 0.0f, 6.0f, "%.2f");
+            ImGui::SliderFloat("Ambient Light", &render_.ambient_light, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Shadow Strength", &render_.shadow_strength, 0.1f, 4.0f, "%.2f");
+            ImGui::SliderFloat("Phase G", &render_.phase_g, -0.3f, 0.8f, "%.2f");
+        } else {
+            ImGui::SliderFloat("Value Min", &render_.scalar_min, -2.0f, 8.0f, "%.3f");
+            ImGui::SliderFloat("Value Max", &render_.scalar_max, -2.0f, 8.0f, "%.3f");
+            ImGui::SliderFloat("Opacity", &render_.scalar_opacity, 0.05f, 8.0f, "%.2f");
+            ImGui::ColorEdit3("Low Color", &render_.scalar_low_r);
+            ImGui::ColorEdit3("High Color", &render_.scalar_high_r);
+        }
         if (field) {
             ImGui::Separator();
             ImGui::Text("Grid: %u x %u x %u", field->nx, field->ny, field->nz);
@@ -166,7 +193,7 @@ namespace app {
         }
     }
 
-    bool FieldRendererApp::render_frame(const std::optional<VolumeFieldView>& field) {
+    bool FieldRendererApp::render_frame(const std::optional<ScalarFieldView>& field) {
         nvtx3::scoped_range range{"renderer.render_frame"};
         using namespace vk;
 
@@ -241,14 +268,17 @@ namespace app {
                 field->nz * field->cell_size,
                 0.0f,
             };
-            push.smoke_color = {render_.smoke_r, render_.smoke_g, render_.smoke_b, 1.0f};
-            push.light_dir = {light_dir.x, light_dir.y, light_dir.z, render_.light_intensity};
-            push.lighting_params = {render_.ambient_light, render_.shadow_strength, render_.phase_g, 0.0f};
+            push.color_a = render_.mode == RenderMode::Smoke
+                ? vk::math::vec4{render_.smoke_r, render_.smoke_g, render_.smoke_b, 1.0f}
+                : vk::math::vec4{render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
+            push.color_b = render_.mode == RenderMode::Smoke
+                ? vk::math::vec4{light_dir.x, light_dir.y, light_dir.z, render_.light_intensity}
+                : vk::math::vec4{render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
             push.params0 = {
                 static_cast<float>(sc_.extent.width) / static_cast<float>((std::max)(sc_.extent.height, 1u)),
                 half_fov_tan,
                 render_.density_scale,
-                render_.absorption,
+                render_.mode == RenderMode::Smoke ? render_.absorption : render_.scalar_opacity,
             };
             push.params1 = {
                 field->nx,
@@ -258,10 +288,13 @@ namespace app {
             };
             push.params2 = {
                 static_cast<uint32_t>(render_.shadow_steps),
-                0u,
-                0u,
+                static_cast<uint32_t>(render_.mode),
+                static_cast<uint32_t>(field->semantic),
                 0u,
             };
+            push.params3 = render_.mode == RenderMode::Smoke
+                ? vk::math::vec4{render_.ambient_light, render_.shadow_strength, render_.phase_g, 0.0f}
+                : vk::math::vec4{render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
 
             cmd.bindPipeline(PipelineBindPoint::eGraphics, *smoke_pipeline_.pipeline);
             cmd.bindDescriptorSets(PipelineBindPoint::eGraphics, *smoke_pipeline_.layout, 0, {field->descriptor_set}, {});
@@ -315,7 +348,7 @@ namespace app {
         return true;
     }
 
-    void FieldRendererApp::frame_volume(const VolumeFieldView& field) {
+    void FieldRendererApp::frame_volume(const ScalarFieldView& field) {
         vk::camera::CameraState camera_state = camera_.state();
         camera_state.mode = vk::camera::Mode::Orbit;
         camera_state.orbit.target = {
@@ -346,14 +379,14 @@ namespace app {
         return frames_.frames_in_flight;
     }
 
-    std::vector<vk::raii::DescriptorSet> FieldRendererApp::allocate_density_descriptor_sets(const uint32_t count) {
-        std::vector<vk::DescriptorSetLayout> density_layouts(count, *density_set_layout_);
-        vk::DescriptorSetAllocateInfo density_alloc_info{
-            .descriptorPool = *density_descriptor_pool_,
+    std::vector<vk::raii::DescriptorSet> FieldRendererApp::allocate_field_descriptor_sets(const uint32_t count) {
+        std::vector<vk::DescriptorSetLayout> field_layouts(count, *field_set_layout_);
+        vk::DescriptorSetAllocateInfo field_alloc_info{
+            .descriptorPool = *field_descriptor_pool_,
             .descriptorSetCount = count,
-            .pSetLayouts = density_layouts.data(),
+            .pSetLayouts = field_layouts.data(),
         };
-        return vkctx_.device.allocateDescriptorSets(density_alloc_info);
+        return vkctx_.device.allocateDescriptorSets(field_alloc_info);
     }
 
     void FieldRendererApp::recreate_swapchain() {

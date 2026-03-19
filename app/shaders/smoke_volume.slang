@@ -6,12 +6,12 @@ struct PushConstants
     float4 forward;
     float4 volumeMin;
     float4 volumeMax;
-    float4 smokeColor;
-    float4 lightDir;
-    float4 lightingParams;
+    float4 colorA;
+    float4 colorB;
     float4 params0;
     uint4 params1;
     uint4 params2;
+    float4 params3;
 };
 
 struct VSOut
@@ -24,14 +24,17 @@ struct VSOut
 ConstantBuffer<PushConstants> pc;
 
 [[vk::binding(0, 0)]]
-StructuredBuffer<float> densityField;
+StructuredBuffer<float> fieldData;
 
-uint density_index(uint x, uint y, uint z)
+static const uint RENDER_MODE_SMOKE = 0;
+static const uint RENDER_MODE_SCALAR = 1;
+
+uint field_index(uint x, uint y, uint z)
 {
     return (z * pc.params1.y + y) * pc.params1.x + x;
 }
 
-float sample_density(float3 uvw)
+float sample_field(float3 uvw)
 {
     uvw = clamp(uvw, 0.0.xxx, 1.0.xxx);
 
@@ -40,14 +43,14 @@ float sample_density(float3 uvw)
     uint3 hi = min(lo + 1, pc.params1.xyz - 1);
     float3 t = frac(p);
 
-    float c000 = densityField[density_index(lo.x, lo.y, lo.z)];
-    float c100 = densityField[density_index(hi.x, lo.y, lo.z)];
-    float c010 = densityField[density_index(lo.x, hi.y, lo.z)];
-    float c110 = densityField[density_index(hi.x, hi.y, lo.z)];
-    float c001 = densityField[density_index(lo.x, lo.y, hi.z)];
-    float c101 = densityField[density_index(hi.x, lo.y, hi.z)];
-    float c011 = densityField[density_index(lo.x, hi.y, hi.z)];
-    float c111 = densityField[density_index(hi.x, hi.y, hi.z)];
+    float c000 = fieldData[field_index(lo.x, lo.y, lo.z)];
+    float c100 = fieldData[field_index(hi.x, lo.y, lo.z)];
+    float c010 = fieldData[field_index(lo.x, hi.y, lo.z)];
+    float c110 = fieldData[field_index(hi.x, hi.y, lo.z)];
+    float c001 = fieldData[field_index(lo.x, lo.y, hi.z)];
+    float c101 = fieldData[field_index(hi.x, lo.y, hi.z)];
+    float c011 = fieldData[field_index(lo.x, hi.y, hi.z)];
+    float c111 = fieldData[field_index(hi.x, hi.y, hi.z)];
 
     float c00 = lerp(c000, c100, t.x);
     float c10 = lerp(c010, c110, t.x);
@@ -102,8 +105,8 @@ float march_light_transmittance(float3 worldPos, float3 lightDir, float densityS
         float travel = lightStart + (i + 0.5) * shadowStepLength;
         float3 shadowPos = worldPos + lightDir * travel;
         float3 shadowUVW = (shadowPos - pc.volumeMin.xyz) / max(pc.volumeMax.xyz - pc.volumeMin.xyz, 1.0e-5.xxx);
-        float shadowDensity = sample_density(shadowUVW) * densityScale;
-        float shadowExtinction = shadowDensity * absorption * pc.lightingParams.y * shadowStepLength;
+        float shadowDensity = sample_field(shadowUVW) * densityScale;
+        float shadowExtinction = shadowDensity * absorption * pc.params3.y * shadowStepLength;
         shadowTransmittance *= exp(-shadowExtinction);
 
         if (shadowTransmittance < 0.01)
@@ -115,7 +118,84 @@ float march_light_transmittance(float3 worldPos, float3 lightDir, float densityS
     return shadowTransmittance;
 }
 
- [shader("vertex")]
+float3 render_smoke(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 background)
+{
+    float distanceInside = t1 - t0;
+    uint steps = max(pc.params1.w, 1u);
+    float stepLength = distanceInside / steps;
+    float transmittance = 1.0;
+    float3 color = background;
+    float3 lightDir = normalize(pc.colorB.xyz);
+
+    [loop]
+    for (uint i = 0; i < steps; ++i)
+    {
+        float travel = t0 + (i + 0.5) * stepLength;
+        float3 worldPos = rayOrigin + travel * rayDir;
+        float3 uvw = (worldPos - pc.volumeMin.xyz) / max(pc.volumeMax.xyz - pc.volumeMin.xyz, 1.0e-5.xxx);
+        float density = sample_field(uvw) * pc.params0.z;
+        if (density < 1.0e-4)
+        {
+            continue;
+        }
+
+        float extinction = density * pc.params0.w * stepLength;
+        float absorb = exp(-extinction);
+        float scatter = 1.0 - absorb;
+        float lightTransmittance = march_light_transmittance(worldPos, lightDir, pc.params0.z, pc.params0.w);
+        float cosTheta = dot(lightDir, -rayDir);
+        float phase = phase_hg(cosTheta, pc.params3.z) * 12.566370614359172;
+        float lighting = pc.params3.x + pc.colorB.w * lightTransmittance * phase;
+        color += transmittance * scatter * lighting * pc.colorA.rgb;
+        transmittance *= absorb;
+
+        if (transmittance < 0.01)
+        {
+            break;
+        }
+    }
+
+    return color;
+}
+
+float3 render_scalar(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 background)
+{
+    float distanceInside = t1 - t0;
+    uint steps = max(pc.params1.w, 1u);
+    float stepLength = distanceInside / steps;
+    float transmittance = 1.0;
+    float3 color = background;
+    float valueMin = pc.params3.x;
+    float valueMax = max(pc.params3.y, valueMin + 1.0e-5);
+
+    [loop]
+    for (uint i = 0; i < steps; ++i)
+    {
+        float travel = t0 + (i + 0.5) * stepLength;
+        float3 worldPos = rayOrigin + travel * rayDir;
+        float3 uvw = (worldPos - pc.volumeMin.xyz) / max(pc.volumeMax.xyz - pc.volumeMin.xyz, 1.0e-5.xxx);
+        float value = sample_field(uvw) * pc.params0.z;
+        float normalized = saturate((value - valueMin) / (valueMax - valueMin));
+        if (normalized < 1.0e-4)
+        {
+            continue;
+        }
+
+        float alpha = 1.0 - exp(-normalized * pc.params0.w * stepLength);
+        float3 sampleColor = lerp(pc.colorA.rgb, pc.colorB.rgb, normalized);
+        color += transmittance * alpha * sampleColor;
+        transmittance *= 1.0 - alpha;
+
+        if (transmittance < 0.01)
+        {
+            break;
+        }
+    }
+
+    return color;
+}
+
+[shader("vertex")]
 VSOut vs_main(uint vertexId : SV_VertexID)
 {
     float2 positions[3] =
@@ -131,7 +211,7 @@ VSOut vs_main(uint vertexId : SV_VertexID)
     return output;
 }
 
- [shader("fragment")]
+[shader("fragment")]
 float4 fs_main(VSOut input) : SV_Target
 {
     float2 uv = float2(input.ndc.x, -input.ndc.y);
@@ -148,46 +228,16 @@ float4 fs_main(VSOut input) : SV_Target
     float3 skyTop = float3(0.08, 0.10, 0.14);
     float3 skyBottom = float3(0.02, 0.025, 0.035);
     float horizon = saturate(0.5 + 0.5 * rayDir.y);
-    float3 color = lerp(skyBottom, skyTop, horizon);
+    float3 background = lerp(skyBottom, skyTop, horizon);
 
     if (t1 <= t0)
     {
-        return float4(color, 1.0);
+        return float4(background, 1.0);
     }
 
-    float distanceInside = t1 - t0;
-    uint steps = max(pc.params1.w, 1u);
-    float stepLength = distanceInside / steps;
-    float transmittance = 1.0;
-    float3 lightDir = normalize(pc.lightDir.xyz);
-
-    [loop]
-    for (uint i = 0; i < steps; ++i)
-    {
-        float travel = t0 + (i + 0.5) * stepLength;
-        float3 worldPos = rayOrigin + travel * rayDir;
-        float3 uvw = (worldPos - pc.volumeMin.xyz) / max(pc.volumeMax.xyz - pc.volumeMin.xyz, 1.0e-5.xxx);
-        float density = sample_density(uvw) * pc.params0.z;
-        if (density < 1.0e-4)
-        {
-            continue;
-        }
-
-        float extinction = density * pc.params0.w * stepLength;
-        float absorb = exp(-extinction);
-        float scatter = 1.0 - absorb;
-        float lightTransmittance = march_light_transmittance(worldPos, lightDir, pc.params0.z, pc.params0.w);
-        float cosTheta = dot(lightDir, -rayDir);
-        float phase = phase_hg(cosTheta, pc.lightingParams.z) * 12.566370614359172;
-        float lighting = pc.lightingParams.x + pc.lightDir.w * lightTransmittance * phase;
-        color += transmittance * scatter * lighting * pc.smokeColor.rgb;
-        transmittance *= absorb;
-
-        if (transmittance < 0.01)
-        {
-            break;
-        }
-    }
+    float3 color = pc.params2.y == RENDER_MODE_SMOKE
+        ? render_smoke(rayOrigin, rayDir, t0, t1, background)
+        : render_scalar(rayOrigin, rayDir, t0, t1, background);
 
     return float4(color, 1.0);
 }

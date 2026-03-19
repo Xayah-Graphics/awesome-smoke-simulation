@@ -16,6 +16,18 @@ import vk.swapchain;
 
 export namespace app {
 
+    enum class FieldSemantic : uint32_t {
+        Density = 0,
+        Temperature = 1,
+        VelocityMagnitude = 2,
+        GenericScalar = 3,
+    };
+
+    enum class RenderMode : uint32_t {
+        Smoke = 0,
+        Scalar = 1,
+    };
+
     struct alignas(16) uvec4 {
         uint32_t x;
         uint32_t y;
@@ -30,15 +42,16 @@ export namespace app {
         vk::math::vec4 forward{};
         vk::math::vec4 volume_min{};
         vk::math::vec4 volume_max{};
-        vk::math::vec4 smoke_color{};
-        vk::math::vec4 light_dir{};
-        vk::math::vec4 lighting_params{};
+        vk::math::vec4 color_a{};
+        vk::math::vec4 color_b{};
         vk::math::vec4 params0{};
         uvec4 params1{};
         uvec4 params2{};
+        vk::math::vec4 params3{};
     };
 
     struct RenderSettings {
+        RenderMode mode = RenderMode::Smoke;
         int march_steps = 64;
         int shadow_steps = 12;
         float density_scale = 1.0f;
@@ -53,6 +66,15 @@ export namespace app {
         float ambient_light = 0.18f;
         float shadow_strength = 1.35f;
         float phase_g = 0.15f;
+        float scalar_min = 0.0f;
+        float scalar_max = 1.0f;
+        float scalar_opacity = 2.0f;
+        float scalar_low_r = 0.08f;
+        float scalar_low_g = 0.18f;
+        float scalar_low_b = 0.46f;
+        float scalar_high_r = 0.98f;
+        float scalar_high_g = 0.82f;
+        float scalar_high_b = 0.24f;
     };
 
     struct FrameInfo {
@@ -60,7 +82,7 @@ export namespace app {
         float render_fps = 0.0f;
     };
 
-    struct VolumeFieldView {
+    struct ScalarFieldView {
         vk::DescriptorSet descriptor_set{nullptr};
         vk::Semaphore timeline_semaphore{nullptr};
         uint64_t ready_generation = 0;
@@ -68,6 +90,8 @@ export namespace app {
         uint32_t ny = 0;
         uint32_t nz = 0;
         float cell_size = 1.0f;
+        FieldSemantic semantic = FieldSemantic::GenericScalar;
+        std::string_view label{};
     };
 
     class FieldRendererApp {
@@ -82,15 +106,15 @@ export namespace app {
 
         [[nodiscard]] bool should_close() const;
         FrameInfo begin_frame();
-        void draw_renderer_ui(const std::optional<VolumeFieldView>& field);
-        bool render_frame(const std::optional<VolumeFieldView>& field);
-        void frame_volume(const VolumeFieldView& field);
+        void draw_renderer_ui(const std::optional<ScalarFieldView>& field);
+        bool render_frame(const std::optional<ScalarFieldView>& field);
+        void frame_volume(const ScalarFieldView& field);
 
         [[nodiscard]] RenderSettings& render_settings();
         [[nodiscard]] const RenderSettings& render_settings() const;
         [[nodiscard]] const vk::context::VulkanContext& vk_context() const;
         [[nodiscard]] uint32_t frames_in_flight() const;
-        [[nodiscard]] std::vector<vk::raii::DescriptorSet> allocate_density_descriptor_sets(uint32_t count);
+        [[nodiscard]] std::vector<vk::raii::DescriptorSet> allocate_field_descriptor_sets(uint32_t count);
 
     private:
         void recreate_swapchain();
@@ -114,8 +138,8 @@ export namespace app {
         vk::frame::FrameSystem frames_{};
         vk::imgui::ImGuiSystem imgui_sys_{};
         vk::camera::Camera camera_{};
-        vk::raii::DescriptorSetLayout density_set_layout_{nullptr};
-        vk::raii::DescriptorPool density_descriptor_pool_{nullptr};
+        vk::raii::DescriptorSetLayout field_set_layout_{nullptr};
+        vk::raii::DescriptorPool field_descriptor_pool_{nullptr};
         vk::raii::ShaderModule smoke_shader_module_{nullptr};
         vk::pipeline::GraphicsPipeline smoke_pipeline_{};
         RenderSettings render_{};
