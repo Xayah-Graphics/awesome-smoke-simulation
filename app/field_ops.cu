@@ -40,6 +40,42 @@ namespace {
         destination[index] = sqrtf(vx * vx + vy * vy + vz * vz);
     }
 
+    __global__ void stable_density_splat_kernel(float* density, const float center_x, const float center_y, const float center_z, const float radius, const float amount, const int nx, const int ny, const int nz) {
+        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+        if (x >= nx || y >= ny || z >= nz) return;
+
+        const float dx = static_cast<float>(x) - center_x;
+        const float dy = static_cast<float>(y) - center_y;
+        const float dz = static_cast<float>(z) - center_z;
+        const float radius2 = radius * radius;
+        const float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 > radius2) return;
+
+        density[index_3d(x, y, z, nx, ny)] += amount * (1.0f - sqrtf(dist2 / fmaxf(radius2, 1.0e-6f)));
+    }
+
+    __global__ void stable_force_splat_kernel(float* velocity_x, float* velocity_y, float* velocity_z, const float center_x, const float center_y, const float center_z, const float radius, const float force_x, const float force_y, const float force_z, const int nx, const int ny, const int nz) {
+        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+        if (x >= nx || y >= ny || z >= nz) return;
+
+        const float dx = static_cast<float>(x) - center_x;
+        const float dy = static_cast<float>(y) - center_y;
+        const float dz = static_cast<float>(z) - center_z;
+        const float radius2 = radius * radius;
+        const float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 > radius2) return;
+
+        const auto index = index_3d(x, y, z, nx, ny);
+        const float weight = 1.0f - sqrtf(dist2 / fmaxf(radius2, 1.0e-6f));
+        velocity_x[index] += force_x * weight;
+        velocity_y[index] += force_y * weight;
+        velocity_z[index] += force_z * weight;
+    }
+
     __global__ void staggered_velocity_magnitude_kernel(float* destination, const float* velocity_x, const float* velocity_y, const float* velocity_z, const int nx, const int ny, const int nz) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
@@ -52,7 +88,114 @@ namespace {
         destination[index_3d(x, y, z, nx, ny)] = sqrtf(vx * vx + vy * vy + vz * vz);
     }
 
+    __global__ void visual_source_cells_kernel(float* density, float* temperature, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float temperature_amount) {
+        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+        if (x >= nx || y >= ny || z >= nz) return;
+
+        const float dx = (static_cast<float>(x) + 0.5f) - center_x;
+        const float dy = (static_cast<float>(y) + 0.5f) - center_y;
+        const float dz = (static_cast<float>(z) + 0.5f) - center_z;
+        const float radius2 = radius * radius;
+        const float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 > radius2) return;
+
+        const auto index = index_3d(x, y, z, nx, ny);
+        const float weight = fmaxf(0.0f, 1.0f - dist2 / radius2);
+        density[index] += density_amount * weight;
+        temperature[index] += temperature_amount * weight;
+    }
+
+    __global__ void visual_source_u_kernel(float* velocity_x, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float amount) {
+        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+        if (x > nx || y >= ny || z >= nz) return;
+
+        const float dx = static_cast<float>(x) - center_x;
+        const float dy = (static_cast<float>(y) + 0.5f) - center_y;
+        const float dz = (static_cast<float>(z) + 0.5f) - center_z;
+        const float radius2 = radius * radius;
+        const float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 > radius2) return;
+        velocity_x[index_3d(x, y, z, nx + 1, ny)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
+    }
+
+    __global__ void visual_source_v_kernel(float* velocity_y, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float amount) {
+        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+        if (x >= nx || y > ny || z >= nz) return;
+
+        const float dx = (static_cast<float>(x) + 0.5f) - center_x;
+        const float dy = static_cast<float>(y) - center_y;
+        const float dz = (static_cast<float>(z) + 0.5f) - center_z;
+        const float radius2 = radius * radius;
+        const float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 > radius2) return;
+        velocity_y[index_3d(x, y, z, nx, ny + 1)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
+    }
+
+    __global__ void visual_source_w_kernel(float* velocity_z, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float amount) {
+        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+        if (x >= nx || y >= ny || z > nz) return;
+
+        const float dx = (static_cast<float>(x) + 0.5f) - center_x;
+        const float dy = (static_cast<float>(y) + 0.5f) - center_y;
+        const float dz = static_cast<float>(z) - center_z;
+        const float radius2 = radius * radius;
+        const float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 > radius2) return;
+        velocity_z[index_3d(x, y, z, nx, ny)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
+    }
+
 } // namespace
+
+int32_t app_add_stable_density_splat_async(void* density, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float amount, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream) {
+    if (nx <= 0 || ny <= 0 || nz <= 0) return 1001;
+    if (radius <= 0.0f) return 1005;
+    if (density == nullptr) return 2001;
+
+    nvtx3::scoped_range range{"smoke_app.add_stable_density_splat"};
+    const dim3 block{static_cast<unsigned>(std::max(block_x, 1)), static_cast<unsigned>(std::max(block_y, 1)), static_cast<unsigned>(std::max(block_z, 1))};
+    stable_density_splat_kernel<<<make_grid(nx, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(reinterpret_cast<float*>(density), center_x, center_y, center_z, radius, amount, nx, ny, nz);
+    return cuda_code(cudaGetLastError());
+}
+
+int32_t app_add_stable_force_splat_async(void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float force_x, float force_y, float force_z, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream) {
+    if (nx <= 0 || ny <= 0 || nz <= 0) return 1001;
+    if (radius <= 0.0f) return 1005;
+    if (velocity_x == nullptr) return 2001;
+    if (velocity_y == nullptr) return 2002;
+    if (velocity_z == nullptr) return 2003;
+
+    nvtx3::scoped_range range{"smoke_app.add_stable_force_splat"};
+    const dim3 block{static_cast<unsigned>(std::max(block_x, 1)), static_cast<unsigned>(std::max(block_y, 1)), static_cast<unsigned>(std::max(block_z, 1))};
+    stable_force_splat_kernel<<<make_grid(nx, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(reinterpret_cast<float*>(velocity_x), reinterpret_cast<float*>(velocity_y), reinterpret_cast<float*>(velocity_z), center_x, center_y, center_z, radius, force_x, force_y, force_z, nx, ny, nz);
+    return cuda_code(cudaGetLastError());
+}
+
+int32_t app_add_visual_source_async(void* density, void* temperature, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float temperature_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z,
+    int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream) {
+    if (nx <= 0 || ny <= 0 || nz <= 0) return 1001;
+    if (radius <= 0.0f) return 1005;
+    if (density == nullptr) return 2001;
+    if (temperature == nullptr) return 2002;
+    if (velocity_x == nullptr) return 2003;
+    if (velocity_y == nullptr) return 2004;
+    if (velocity_z == nullptr) return 2005;
+
+    nvtx3::scoped_range range{"smoke_app.add_visual_source"};
+    const dim3 block{static_cast<unsigned>(std::max(block_x, 1)), static_cast<unsigned>(std::max(block_y, 1)), static_cast<unsigned>(std::max(block_z, 1))};
+    visual_source_cells_kernel<<<make_grid(nx, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(reinterpret_cast<float*>(density), reinterpret_cast<float*>(temperature), nx, ny, nz, center_x, center_y, center_z, radius, density_amount, temperature_amount);
+    visual_source_u_kernel<<<make_grid(nx + 1, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(reinterpret_cast<float*>(velocity_x), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_x);
+    visual_source_v_kernel<<<make_grid(nx, ny + 1, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(reinterpret_cast<float*>(velocity_y), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_y);
+    visual_source_w_kernel<<<make_grid(nx, ny, nz + 1, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(reinterpret_cast<float*>(velocity_z), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_z);
+    return cuda_code(cudaGetLastError());
+}
 
 int32_t app_compute_collocated_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream) {
     if (nx <= 0 || ny <= 0 || nz <= 0) return 1001;

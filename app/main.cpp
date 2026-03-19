@@ -18,6 +18,10 @@ import vk.memory;
 
 int32_t app_compute_collocated_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
 int32_t app_compute_staggered_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
+int32_t app_add_stable_density_splat_async(void* density, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float amount, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
+int32_t app_add_stable_force_splat_async(void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float force_x, float force_y, float force_z, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
+int32_t app_add_visual_source_async(void* density, void* temperature, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float temperature_amount, float velocity_source_x, float velocity_source_y,
+    float velocity_source_z, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
 
 namespace {
 
@@ -217,6 +221,10 @@ int main() {
         std::vector<SnapshotSlot> snapshot_slots{};
 
         auto scalar_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto stable_temporary_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 2) * static_cast<uint64_t>(ny + 2) * static_cast<uint64_t>(nz + 2) * sizeof(float); };
+        auto visual_velocity_x_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto visual_velocity_y_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto visual_velocity_z_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
 
         auto current_fields = [&]() -> std::span<const FieldChoice> { return backend_kind == BackendKind::StableFluids001 ? std::span<const FieldChoice>(stable_fields) : std::span<const FieldChoice>(visual_fields); };
 
@@ -664,7 +672,7 @@ int main() {
 
             if (backend_kind == BackendKind::StableFluids001) {
                 viewer_runtime.field_bytes       = scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
-                const auto temporary_field_bytes = stable_fluids_temporary_field_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
+                const auto temporary_field_bytes = stable_temporary_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), viewer_runtime.field_bytes), "cudaMalloc stable density");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), viewer_runtime.field_bytes), "cudaMalloc stable velocity_x");
@@ -681,10 +689,10 @@ int main() {
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), temporary_field_bytes), "cudaMalloc stable temporary_pressure");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), temporary_field_bytes), "cudaMalloc stable temporary_divergence");
             } else {
-                viewer_runtime.field_bytes  = visual_simulation_of_smoke_scalar_field_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
-                const auto velocity_x_bytes = visual_simulation_of_smoke_velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
-                const auto velocity_y_bytes = visual_simulation_of_smoke_velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
-                const auto velocity_z_bytes = visual_simulation_of_smoke_velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                viewer_runtime.field_bytes  = scalar_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                const auto velocity_x_bytes = visual_velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                const auto velocity_y_bytes = visual_velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                const auto velocity_z_bytes = visual_velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 cuda_ok(cudaStreamCreateWithFlags(&visual_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags visual_stream");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.density), viewer_runtime.field_bytes), "cudaMalloc visual density");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temperature), viewer_runtime.field_bytes), "cudaMalloc visual temperature");
@@ -710,20 +718,25 @@ int main() {
             create_snapshot_slots();
 
             if (backend_kind == BackendKind::StableFluids001) {
-                stable_ok(stable_fluids_clear_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, stable_runtime.sim_stream), "stable_fluids_clear_async");
+                cuda_ok(cudaMemsetAsync(stable_runtime.density, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable density");
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_x, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_x");
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_y, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_y");
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_z, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_z");
                 if (stable_settings.emit_density) {
                     const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                     const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                     const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                    stable_ok(stable_fluids_add_density_splat_async(stable_runtime.density, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_runtime.sim_stream), "stable_fluids_add_density_splat_async");
+                    stable_ok(app_add_stable_density_splat_async(stable_runtime.density, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z,
+                                  stable_runtime.sim_stream),
+                        "app_add_stable_density_splat_async");
                 }
                 if (stable_settings.emit_force) {
                     const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                     const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                     const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                    stable_ok(stable_fluids_add_force_splat_async(
-                                  stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.force_x, stable_settings.force_y, stable_settings.force_z, stable_runtime.sim_stream),
-                        "stable_fluids_add_force_splat_async");
+                    stable_ok(app_add_stable_force_splat_async(stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.force_x, stable_settings.force_y,
+                                  stable_settings.force_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
+                        "app_add_stable_force_splat_async");
                 }
                 if (stable_settings.emit_density || stable_settings.emit_force) {
                     stable_ok(stable_fluids_step_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, stable_settings.desc.cell_size, stable_runtime.temporary_density, stable_runtime.temporary_velocity_x,
@@ -732,14 +745,18 @@ int main() {
                         "stable_fluids_step_async");
                 }
             } else {
-                smoke_ok(visual_simulation_of_smoke_clear_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, visual_runtime.sim_stream), "visual_simulation_of_smoke_clear_async");
+                cuda_ok(cudaMemsetAsync(visual_runtime.density, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual density");
+                cuda_ok(cudaMemsetAsync(visual_runtime.temperature, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual temperature");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_x, 0, visual_velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_x");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_y, 0, visual_velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_y");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_z, 0, visual_velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_z");
                 if (visual_settings.emit_source) {
                     const float center_x = visual_settings.source_u * static_cast<float>(visual_settings.desc.nx);
                     const float center_y = visual_settings.source_v * static_cast<float>(visual_settings.desc.ny);
                     const float center_z = visual_settings.source_w * static_cast<float>(visual_settings.desc.nz);
-                    smoke_ok(visual_simulation_of_smoke_add_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
-                                 visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
-                        "visual_simulation_of_smoke_add_source_async");
+                    smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius, visual_settings.density_amount,
+                                 visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
+                        "app_add_visual_source_async");
                     smoke_ok(visual_simulation_of_smoke_step_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, visual_settings.desc.cell_size, visual_runtime.temporary_previous_density,
                                  visual_runtime.temporary_previous_temperature, visual_runtime.temporary_previous_velocity_x, visual_runtime.temporary_previous_velocity_y, visual_runtime.temporary_previous_velocity_z, visual_runtime.temporary_pressure, visual_runtime.temporary_divergence, visual_runtime.temporary_omega_x, visual_runtime.temporary_omega_y,
                                  visual_runtime.temporary_omega_z, visual_runtime.temporary_omega_magnitude, visual_runtime.temporary_force_x, visual_runtime.temporary_force_y, visual_runtime.temporary_force_z, visual_settings.desc.dt, visual_settings.desc.ambient_temperature, visual_settings.desc.density_buoyancy, visual_settings.desc.temperature_buoyancy,
@@ -878,16 +895,18 @@ int main() {
                                 const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                                 const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                                 const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                                stable_ok(stable_fluids_add_density_splat_async(stable_runtime.density, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_runtime.sim_stream), "stable_fluids_add_density_splat_async");
+                                stable_ok(app_add_stable_density_splat_async(stable_runtime.density, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.desc.block_x, stable_settings.desc.block_y,
+                                              stable_settings.desc.block_z, stable_runtime.sim_stream),
+                                    "app_add_stable_density_splat_async");
                             }
                             if (stable_settings.emit_force) {
                                 nvtx3::scoped_range range{"smoke_app.simulation.add_force"};
                                 const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                                 const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                                 const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                                stable_ok(stable_fluids_add_force_splat_async(stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.force_x, stable_settings.force_y,
-                                              stable_settings.force_z, stable_runtime.sim_stream),
-                                    "stable_fluids_add_force_splat_async");
+                                stable_ok(app_add_stable_force_splat_async(stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.force_x, stable_settings.force_y,
+                                              stable_settings.force_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
+                                    "app_add_stable_force_splat_async");
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};
@@ -903,9 +922,9 @@ int main() {
                                 const float center_x = visual_settings.source_u * static_cast<float>(visual_settings.desc.nx);
                                 const float center_y = visual_settings.source_v * static_cast<float>(visual_settings.desc.ny);
                                 const float center_z = visual_settings.source_w * static_cast<float>(visual_settings.desc.nz);
-                                smoke_ok(visual_simulation_of_smoke_add_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
+                                smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
                                              visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
-                                    "visual_simulation_of_smoke_add_source_async");
+                                    "app_add_visual_source_async");
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};
