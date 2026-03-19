@@ -2,6 +2,7 @@ module;
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
+
 #include <nvtx3/nvtx3.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
@@ -22,9 +23,9 @@ namespace app {
         using namespace vk;
 
         auto [vkctx, sctx] = context::setup_vk_context_glfw("awesome-smoke-simulation", "smoke-visualizer");
-        vkctx_ = std::move(vkctx);
-        sctx_ = std::move(sctx);
-        window_ = sctx_.window.get();
+        vkctx_             = std::move(vkctx);
+        sctx_              = std::move(sctx);
+        window_            = sctx_.window.get();
 
         window_state_.resize_requested = &sctx_.resize_requested;
         glfwSetWindowUserPointer(window_, &window_state_);
@@ -42,57 +43,57 @@ namespace app {
         });
         glfwGetCursorPos(window_, &window_state_.last_x, &window_state_.last_y);
 
-        sc_ = swapchain::setup_swapchain(vkctx_, sctx_);
-        frames_ = frame::create_frame_system(vkctx_, sc_, frames_in_flight_value_);
+        sc_        = swapchain::setup_swapchain(vkctx_, sctx_);
+        frames_    = frame::create_frame_system(vkctx_, sc_, frames_in_flight_value_);
         imgui_sys_ = imgui::create(vkctx_, window_, sc_.format, frames_in_flight_value_, static_cast<uint32_t>(sc_.images.size()));
 
         camera::CameraConfig camera_config{};
         camera_config.orbit_rotate_sens = 0.005f;
-        camera_config.orbit_zoom_sens = 0.12f;
+        camera_config.orbit_zoom_sens   = 0.12f;
         camera_.set_config(camera_config);
         camera_.home();
 
         DescriptorSetLayoutBinding field_binding{
-            .binding = 0,
-            .descriptorType = DescriptorType::eStorageBuffer,
+            .binding         = 0,
+            .descriptorType  = DescriptorType::eStorageBuffer,
             .descriptorCount = 1,
-            .stageFlags = ShaderStageFlagBits::eFragment,
+            .stageFlags      = ShaderStageFlagBits::eFragment,
         };
         DescriptorSetLayoutCreateInfo field_layout_ci{
             .bindingCount = 1,
-            .pBindings = &field_binding,
+            .pBindings    = &field_binding,
         };
         field_set_layout_ = raii::DescriptorSetLayout{vkctx_.device, field_layout_ci};
 
         DescriptorPoolSize field_pool_size{
-            .type = DescriptorType::eStorageBuffer,
+            .type            = DescriptorType::eStorageBuffer,
             .descriptorCount = 128,
         };
         DescriptorPoolCreateInfo field_pool_ci{
-            .flags = DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = 128,
+            .flags         = DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets       = 128,
             .poolSizeCount = 1,
-            .pPoolSizes = &field_pool_size,
+            .pPoolSizes    = &field_pool_size,
         };
         field_descriptor_pool_ = raii::DescriptorPool{vkctx_.device, field_pool_ci};
 
         const std::filesystem::path shader_path = std::filesystem::path(SMOKE_SIM_SHADER_DIR) / "smoke_volume.spv";
-        const auto smoke_shader_spv = pipeline::read_file_bytes(shader_path.string());
-        smoke_shader_module_ = pipeline::load_shader_module(vkctx_.device, smoke_shader_spv);
+        const auto smoke_shader_spv             = pipeline::read_file_bytes(shader_path.string());
+        smoke_shader_module_                    = pipeline::load_shader_module(vkctx_.device, smoke_shader_spv);
 
         std::array<DescriptorSetLayout, 1> pipeline_set_layouts{*field_set_layout_};
         pipeline::GraphicsPipelineDesc pipeline_desc{};
-        pipeline_desc.color_format = sc_.format;
-        pipeline_desc.use_depth = false;
-        pipeline_desc.use_blend = false;
-        pipeline_desc.topology = PrimitiveTopology::eTriangleList;
-        pipeline_desc.cull = CullModeFlagBits::eNone;
-        pipeline_desc.push_constant_bytes = sizeof(PushConstants);
+        pipeline_desc.color_format         = sc_.format;
+        pipeline_desc.use_depth            = false;
+        pipeline_desc.use_blend            = false;
+        pipeline_desc.topology             = PrimitiveTopology::eTriangleList;
+        pipeline_desc.cull                 = CullModeFlagBits::eNone;
+        pipeline_desc.push_constant_bytes  = sizeof(PushConstants);
         pipeline_desc.push_constant_stages = ShaderStageFlagBits::eVertex | ShaderStageFlagBits::eFragment;
-        pipeline_desc.set_layouts = pipeline_set_layouts;
+        pipeline_desc.set_layouts          = pipeline_set_layouts;
 
         pipeline::VertexInput empty_vertex_input{};
-        smoke_pipeline_ = pipeline::create_graphics_pipeline(vkctx_.device, empty_vertex_input, pipeline_desc, smoke_shader_module_, "vs_main", "fs_main");
+        smoke_pipeline_  = pipeline::create_graphics_pipeline(vkctx_.device, empty_vertex_input, pipeline_desc, smoke_shader_module_, "vs_main", "fs_main");
         last_frame_time_ = std::chrono::steady_clock::now();
     }
 
@@ -115,12 +116,12 @@ namespace app {
         nvtx3::scoped_range range{"renderer.begin_frame"};
         glfwPollEvents();
 
-        const auto now = std::chrono::steady_clock::now();
+        const auto now         = std::chrono::steady_clock::now();
         const float dt_seconds = std::chrono::duration<float>(now - last_frame_time_).count();
-        last_frame_time_ = now;
+        last_frame_time_       = now;
         if (dt_seconds > 0.0f) {
             const float instantaneous_fps = 1.0f / dt_seconds;
-            render_fps_ = render_fps_ > 0.0f ? std::lerp(render_fps_, instantaneous_fps, 0.1f) : instantaneous_fps;
+            render_fps_                   = render_fps_ > 0.0f ? std::lerp(render_fps_, instantaneous_fps, 0.1f) : instantaneous_fps;
         }
 
         if (sctx_.resize_requested) {
@@ -145,7 +146,7 @@ namespace app {
             ImGui::TextUnformatted("Field: None");
         }
         if (allow_smoke_mode) {
-            int mode = static_cast<int>(render_.mode);
+            int mode             = static_cast<int>(render_.mode);
             const char* labels[] = {"Smoke", "Scalar"};
             if (ImGui::Combo("View Mode", &mode, labels, 2)) {
                 render_.mode = static_cast<RenderMode>(mode);
@@ -184,9 +185,7 @@ namespace app {
         if (const ImGuiViewport* viewport = ImGui::GetMainViewport()) {
             ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 12.0f, viewport->Pos.y + 12.0f), ImGuiCond_Always);
             ImGui::SetNextWindowBgAlpha(0.35f);
-            ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs;
+            ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs;
             ImGui::Begin("Render Stats Overlay", nullptr, overlay_flags);
             ImGui::Text("Render: %.1f FPS", render_fps_);
             ImGui::End();
@@ -207,60 +206,60 @@ namespace app {
         frame::begin_commands(frames_, frame_index_);
         auto& cmd = frame::cmd(frames_, frame_index_);
 
-        const uint32_t image_index = acquire_result.image_index;
+        const uint32_t image_index        = acquire_result.image_index;
         const ImageLayout previous_layout = frames_.swapchain_image_layout[image_index];
         const ImageMemoryBarrier2 to_color_barrier{
-            .srcStageMask = previous_layout == ImageLayout::eUndefined ? PipelineStageFlagBits2::eNone : PipelineStageFlagBits2::eAllCommands,
-            .srcAccessMask = previous_layout == ImageLayout::eUndefined ? AccessFlags2{} : (AccessFlagBits2::eMemoryRead | AccessFlagBits2::eMemoryWrite),
-            .dstStageMask = PipelineStageFlagBits2::eColorAttachmentOutput,
-            .dstAccessMask = AccessFlagBits2::eColorAttachmentWrite,
-            .oldLayout = previous_layout,
-            .newLayout = ImageLayout::eColorAttachmentOptimal,
-            .image = sc_.images[image_index],
+            .srcStageMask     = previous_layout == ImageLayout::eUndefined ? PipelineStageFlagBits2::eNone : PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask    = previous_layout == ImageLayout::eUndefined ? AccessFlags2{} : (AccessFlagBits2::eMemoryRead | AccessFlagBits2::eMemoryWrite),
+            .dstStageMask     = PipelineStageFlagBits2::eColorAttachmentOutput,
+            .dstAccessMask    = AccessFlagBits2::eColorAttachmentWrite,
+            .oldLayout        = previous_layout,
+            .newLayout        = ImageLayout::eColorAttachmentOptimal,
+            .image            = sc_.images[image_index],
             .subresourceRange = ImageSubresourceRange{ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
         cmd.pipelineBarrier2(DependencyInfo{
             .imageMemoryBarrierCount = 1,
-            .pImageMemoryBarriers = &to_color_barrier,
+            .pImageMemoryBarriers    = &to_color_barrier,
         });
         frames_.swapchain_image_layout[image_index] = ImageLayout::eColorAttachmentOptimal;
 
         ClearValue clear_value{};
         clear_value.color = ClearColorValue{std::array<float, 4>{0.02f, 0.025f, 0.035f, 1.0f}};
         RenderingAttachmentInfo color_attachment{
-            .imageView = *sc_.image_views[image_index],
+            .imageView   = *sc_.image_views[image_index],
             .imageLayout = ImageLayout::eColorAttachmentOptimal,
-            .loadOp = AttachmentLoadOp::eClear,
-            .storeOp = AttachmentStoreOp::eStore,
-            .clearValue = clear_value,
+            .loadOp      = AttachmentLoadOp::eClear,
+            .storeOp     = AttachmentStoreOp::eStore,
+            .clearValue  = clear_value,
         };
         RenderingInfo rendering_info{
-            .renderArea = Rect2D{Offset2D{0, 0}, sc_.extent},
-            .layerCount = 1,
+            .renderArea           = Rect2D{Offset2D{0, 0}, sc_.extent},
+            .layerCount           = 1,
             .colorAttachmentCount = 1,
-            .pColorAttachments = &color_attachment,
+            .pColorAttachments    = &color_attachment,
         };
 
         cmd.beginRendering(rendering_info);
         cmd.setViewport(0, Viewport{
-            0.0f,
-            0.0f,
-            static_cast<float>(sc_.extent.width),
-            static_cast<float>(sc_.extent.height),
-            0.0f,
-            1.0f,
-        });
+                               0.0f,
+                               0.0f,
+                               static_cast<float>(sc_.extent.width),
+                               static_cast<float>(sc_.extent.height),
+                               0.0f,
+                               1.0f,
+                           });
         cmd.setScissor(0, Rect2D{{0, 0}, sc_.extent});
 
         if (field) {
-            const auto& matrices = camera_.matrices();
-            const float half_fov_tan = std::tan(camera_.config().fov_y_rad * 0.5f);
+            const auto& matrices           = camera_.matrices();
+            const float half_fov_tan       = std::tan(camera_.config().fov_y_rad * 0.5f);
             const vk::math::vec3 light_dir = vk::math::normalize(vk::math::vec3{render_.light_x, render_.light_y, render_.light_z, 0.0f});
             PushConstants push{};
-            push.eye = {matrices.eye.x, matrices.eye.y, matrices.eye.z, 1.0f};
-            push.right = {matrices.right.x, matrices.right.y, matrices.right.z, 0.0f};
-            push.up = {matrices.up.x, matrices.up.y, matrices.up.z, 0.0f};
-            push.forward = {matrices.forward.x, matrices.forward.y, matrices.forward.z, 0.0f};
+            push.eye        = {matrices.eye.x, matrices.eye.y, matrices.eye.z, 1.0f};
+            push.right      = {matrices.right.x, matrices.right.y, matrices.right.z, 0.0f};
+            push.up         = {matrices.up.x, matrices.up.y, matrices.up.z, 0.0f};
+            push.forward    = {matrices.forward.x, matrices.forward.y, matrices.forward.z, 0.0f};
             push.volume_min = {0.0f, 0.0f, 0.0f, 0.0f};
             push.volume_max = {
                 field->nx * field->cell_size,
@@ -268,14 +267,10 @@ namespace app {
                 field->nz * field->cell_size,
                 0.0f,
             };
-            push.color_a = render_.mode == RenderMode::Smoke
-                ? vk::math::vec4{render_.smoke_r, render_.smoke_g, render_.smoke_b, 1.0f}
-                : vk::math::vec4{render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
-            push.color_b = render_.mode == RenderMode::Smoke
-                ? vk::math::vec4{light_dir.x, light_dir.y, light_dir.z, render_.light_intensity}
-                : vk::math::vec4{render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
+            push.color_a = render_.mode == RenderMode::Smoke ? vk::math::vec4{render_.smoke_r, render_.smoke_g, render_.smoke_b, 1.0f} : vk::math::vec4{render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
+            push.color_b = render_.mode == RenderMode::Smoke ? vk::math::vec4{light_dir.x, light_dir.y, light_dir.z, render_.light_intensity} : vk::math::vec4{render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
             push.params0 = {
-                static_cast<float>(sc_.extent.width) / static_cast<float>((std::max)(sc_.extent.height, 1u)),
+                static_cast<float>(sc_.extent.width) / static_cast<float>((std::max) (sc_.extent.height, 1u)),
                 half_fov_tan,
                 render_.density_scale,
                 render_.mode == RenderMode::Smoke ? render_.absorption : render_.scalar_opacity,
@@ -292,9 +287,7 @@ namespace app {
                 static_cast<uint32_t>(field->semantic),
                 0u,
             };
-            push.params3 = render_.mode == RenderMode::Smoke
-                ? vk::math::vec4{render_.ambient_light, render_.shadow_strength, render_.phase_g, 0.0f}
-                : vk::math::vec4{render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
+            push.params3 = render_.mode == RenderMode::Smoke ? vk::math::vec4{render_.ambient_light, render_.shadow_strength, render_.phase_g, 0.0f} : vk::math::vec4{render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
 
             cmd.bindPipeline(PipelineBindPoint::eGraphics, *smoke_pipeline_.pipeline);
             cmd.bindDescriptorSets(PipelineBindPoint::eGraphics, *smoke_pipeline_.layout, 0, {field->descriptor_set}, {});
@@ -313,17 +306,17 @@ namespace app {
         imgui::render(imgui_sys_, cmd, sc_.extent, *sc_.image_views[image_index], ImageLayout::eColorAttachmentOptimal);
 
         const ImageMemoryBarrier2 to_present_barrier{
-            .srcStageMask = PipelineStageFlagBits2::eColorAttachmentOutput,
-            .srcAccessMask = AccessFlagBits2::eColorAttachmentWrite,
-            .dstStageMask = PipelineStageFlagBits2::eBottomOfPipe,
-            .oldLayout = ImageLayout::eColorAttachmentOptimal,
-            .newLayout = ImageLayout::ePresentSrcKHR,
-            .image = sc_.images[image_index],
+            .srcStageMask     = PipelineStageFlagBits2::eColorAttachmentOutput,
+            .srcAccessMask    = AccessFlagBits2::eColorAttachmentWrite,
+            .dstStageMask     = PipelineStageFlagBits2::eBottomOfPipe,
+            .oldLayout        = ImageLayout::eColorAttachmentOptimal,
+            .newLayout        = ImageLayout::ePresentSrcKHR,
+            .image            = sc_.images[image_index],
             .subresourceRange = ImageSubresourceRange{ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
         cmd.pipelineBarrier2(DependencyInfo{
             .imageMemoryBarrierCount = 1,
-            .pImageMemoryBarriers = &to_present_barrier,
+            .pImageMemoryBarriers    = &to_present_barrier,
         });
         frames_.swapchain_image_layout[image_index] = ImageLayout::ePresentSrcKHR;
 
@@ -332,7 +325,7 @@ namespace app {
         if (field) {
             volume_waits[0] = SemaphoreSubmitInfo{
                 .semaphore = field->timeline_semaphore,
-                .value = field->ready_generation,
+                .value     = field->ready_generation,
                 .stageMask = PipelineStageFlagBits2::eFragmentShader,
             };
             extra_waits = std::span<const SemaphoreSubmitInfo>(volume_waits.data(), volume_waits.size());
@@ -350,15 +343,15 @@ namespace app {
 
     void FieldRendererApp::frame_volume(const ScalarFieldView& field) {
         vk::camera::CameraState camera_state = camera_.state();
-        camera_state.mode = vk::camera::Mode::Orbit;
-        camera_state.orbit.target = {
+        camera_state.mode                    = vk::camera::Mode::Orbit;
+        camera_state.orbit.target            = {
             field.nx * field.cell_size * 0.5f,
             field.ny * field.cell_size * 0.5f,
             field.nz * field.cell_size * 0.5f,
             0.0f,
         };
-        camera_state.orbit.distance = (std::max)({field.nx, field.ny, field.nz}) * field.cell_size * 2.15f;
-        camera_state.orbit.yaw_rad = -0.78539816339f;
+        camera_state.orbit.distance  = (std::max) ({field.nx, field.ny, field.nz}) * field.cell_size * 2.15f;
+        camera_state.orbit.yaw_rad   = -0.78539816339f;
         camera_state.orbit.pitch_rad = -0.43633231299f;
         camera_.set_state(camera_state);
     }
@@ -382,9 +375,9 @@ namespace app {
     std::vector<vk::raii::DescriptorSet> FieldRendererApp::allocate_field_descriptor_sets(const uint32_t count) {
         std::vector<vk::DescriptorSetLayout> field_layouts(count, *field_set_layout_);
         vk::DescriptorSetAllocateInfo field_alloc_info{
-            .descriptorPool = *field_descriptor_pool_,
+            .descriptorPool     = *field_descriptor_pool_,
             .descriptorSetCount = count,
-            .pSetLayouts = field_layouts.data(),
+            .pSetLayouts        = field_layouts.data(),
         };
         return vkctx_.device.allocateDescriptorSets(field_alloc_info);
     }
@@ -394,7 +387,7 @@ namespace app {
         vk::frame::on_swapchain_recreated(vkctx_, sc_, frames_);
         const uint32_t image_count = static_cast<uint32_t>(sc_.images.size());
         if (imgui_sys_.image_count != image_count || imgui_sys_.min_image_count != image_count || imgui_sys_.color_format != sc_.format) {
-            const bool docking = imgui_sys_.docking;
+            const bool docking   = imgui_sys_.docking;
             const bool viewports = imgui_sys_.viewports;
             vk::imgui::shutdown(imgui_sys_);
             imgui_sys_ = vk::imgui::create(vkctx_, window_, sc_.format, image_count, image_count, docking, viewports);
@@ -421,24 +414,24 @@ namespace app {
         auto& io = ImGui::GetIO();
         vk::camera::CameraInput camera_input{};
         if (!io.WantCaptureMouse) {
-            camera_input.lmb = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-            camera_input.mmb = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
-            camera_input.rmb = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+            camera_input.lmb      = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+            camera_input.mmb      = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+            camera_input.rmb      = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
             camera_input.mouse_dx = mouse_dx;
             camera_input.mouse_dy = mouse_dy;
-            camera_input.scroll = window_state_.scroll;
+            camera_input.scroll   = window_state_.scroll;
         }
         if (!io.WantCaptureKeyboard) {
-            camera_input.forward = glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS;
+            camera_input.forward  = glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS;
             camera_input.backward = glfwGetKey(window_, GLFW_KEY_S) == GLFW_PRESS;
-            camera_input.left = glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS;
-            camera_input.right = glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS;
-            camera_input.up = glfwGetKey(window_, GLFW_KEY_E) == GLFW_PRESS;
-            camera_input.down = glfwGetKey(window_, GLFW_KEY_Q) == GLFW_PRESS;
-            camera_input.shift = glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-            camera_input.ctrl = glfwGetKey(window_, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-            camera_input.alt = glfwGetKey(window_, GLFW_KEY_LEFT_ALT) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
-            camera_input.space = glfwGetKey(window_, GLFW_KEY_SPACE) == GLFW_PRESS;
+            camera_input.left     = glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS;
+            camera_input.right    = glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS;
+            camera_input.up       = glfwGetKey(window_, GLFW_KEY_E) == GLFW_PRESS;
+            camera_input.down     = glfwGetKey(window_, GLFW_KEY_Q) == GLFW_PRESS;
+            camera_input.shift    = glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+            camera_input.ctrl     = glfwGetKey(window_, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+            camera_input.alt      = glfwGetKey(window_, GLFW_KEY_LEFT_ALT) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+            camera_input.space    = glfwGetKey(window_, GLFW_KEY_SPACE) == GLFW_PRESS;
         }
         window_state_.scroll = 0.0f;
 
