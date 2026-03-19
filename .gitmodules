@@ -4,3 +4,6 @@
 [submodule "001-stable-fluids"]
 	path = 001-stable-fluids
 	url = https://github.com/Xayah-Graphics/stable-fluids.git
+[submodule "002-visual-simulation-of-smoke"]
+	path = 002-visual-simulation-of-smoke
+	url = https://github.com/Xayah-Graphics/visual-simulation-of-smoke.git

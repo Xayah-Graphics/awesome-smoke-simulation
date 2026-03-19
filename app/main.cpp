@@ -7,7 +7,7 @@
 #endif
 #include <vulkan/vulkan_raii.hpp>
 
-#include "stable_fluids.h"
+#include "visual-simulation-of-smoke.h"
 
 import app;
 import std;
@@ -21,46 +21,40 @@ namespace {
         bool paused = false;
         bool step_once = false;
         int sim_steps_per_frame = 1;
-        int snapshot_interval = 3;
+        int snapshot_interval = 2;
     };
 
-    struct StableFluidsSettings {
-        StableFluidsContextDesc desc = stable_fluids_context_desc_default();
-        bool emit_density = true;
-        bool emit_force = true;
+    struct VisualSmokeSettings {
+        VisualSimulationOfSmokeContextDesc desc = visual_simulation_of_smoke_context_desc_default();
+        bool emit_source = true;
         float source_u = 0.5f;
-        float source_v = 0.22f;
+        float source_v = 0.18f;
         float source_w = 0.5f;
-        float density_radius = 5.0f;
-        float density_amount = 1.2f;
-        float force_radius = 6.0f;
-        float force_x = 0.0f;
-        float force_y = 1.8f;
-        float force_z = 0.0f;
+        float source_radius = 5.0f;
+        float density_amount = 0.85f;
+        float temperature_amount = 1.35f;
+        float velocity_x = 0.0f;
+        float velocity_y = 1.2f;
+        float velocity_z = 0.0f;
 
-        StableFluidsSettings() {
-            desc.nx = 96;
+        VisualSmokeSettings() {
+            desc.nx = 64;
             desc.ny = 96;
-            desc.nz = 96;
+            desc.nz = 64;
             desc.dt = 1.0f / 90.0f;
-            desc.viscosity = 0.00012f;
-            desc.diffusion = 0.00003f;
-            desc.diffuse_iterations = 8;
-            desc.pressure_iterations = 24;
-            desc.pressure_tolerance = 1.0e-5f;
+            desc.cell_size = 1.0f;
+            desc.ambient_temperature = 0.0f;
+            desc.density_buoyancy = 0.045f;
+            desc.temperature_buoyancy = 0.12f;
+            desc.vorticity_epsilon = 2.0f;
+            desc.pressure_iterations = 80;
+            desc.use_monotonic_cubic = 1u;
         }
     };
 
-    struct StableFluidsRuntime {
-        StableFluidsContext* context = nullptr;
-        StableFluidsFieldSetDesc fields{};
-        float* density = nullptr;
-        float* velocity_x = nullptr;
-        float* velocity_y = nullptr;
-        float* velocity_z = nullptr;
+    struct VisualSmokeRuntime {
+        VisualSimulationOfSmokeContext* context = nullptr;
         cudaStream_t sim_stream = nullptr;
-        cudaStream_t snapshot_stream = nullptr;
-        cudaEvent_t step_complete_event = nullptr;
         uint64_t field_bytes = 0;
         uint64_t snapshot_generation = 0;
         uint64_t submit_serial = 0;
@@ -74,23 +68,21 @@ namespace {
         vk::raii::DeviceMemory memory{nullptr};
         vk::raii::Semaphore timeline_semaphore{nullptr};
         vk::raii::DescriptorSet descriptor_set{nullptr};
-        StableFluidsBufferView buffer_view{};
+        VisualSimulationOfSmokeBufferView buffer_view{};
         cudaExternalMemory_t external_memory = nullptr;
         cudaExternalSemaphore_t external_semaphore = nullptr;
         void* cuda_ptr = nullptr;
-        bool pending = false;
-        uint64_t pending_generation = 0;
         uint64_t ready_generation = 0;
         uint64_t last_used_submit_serial = 0;
     };
 
     auto make_device_buffer_view(void* data, const uint64_t size_bytes) {
-        StableFluidsBufferView view{};
-        view.data = data;
-        view.size_bytes = size_bytes;
-        view.format = STABLE_FLUIDS_BUFFER_FORMAT_F32;
-        view.memory_type = STABLE_FLUIDS_MEMORY_TYPE_CUDA_DEVICE;
-        return view;
+        return VisualSimulationOfSmokeBufferView{
+            .data = data,
+            .size_bytes = size_bytes,
+            .format = VISUAL_SIMULATION_OF_SMOKE_BUFFER_FORMAT_F32,
+            .memory_type = VISUAL_SIMULATION_OF_SMOKE_MEMORY_TYPE_CUDA_DEVICE,
+        };
     }
 
     auto cuda_ok(const cudaError_t status, const char* what) {
@@ -100,21 +92,20 @@ namespace {
         throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(status));
     }
 
-    auto stable_ok(const int32_t code, const char* what, const StableFluidsContext* context = nullptr) {
-        if (code == STABLE_FLUIDS_SUCCESS) {
+    auto smoke_ok(const int32_t code, const char* what, const VisualSimulationOfSmokeContext* context = nullptr) {
+        if (code == VISUAL_SIMULATION_OF_SMOKE_SUCCESS) {
             return;
         }
 
-        const uint64_t message_length =
-            context != nullptr ? stable_fluids_context_last_error_length(context) : stable_fluids_last_error_length();
+        const uint64_t message_length = context != nullptr ? visual_simulation_of_smoke_context_last_error_length(context) : visual_simulation_of_smoke_last_error_length();
         std::vector<char> message(static_cast<size_t>(message_length + 1), '\0');
         const int32_t copy_code = context != nullptr
-            ? stable_fluids_copy_context_last_error(context, message.data(), static_cast<uint64_t>(message.size()))
-            : stable_fluids_copy_last_error(message.data(), static_cast<uint64_t>(message.size()));
+            ? visual_simulation_of_smoke_copy_context_last_error(context, message.data(), static_cast<uint64_t>(message.size()))
+            : visual_simulation_of_smoke_copy_last_error(message.data(), static_cast<uint64_t>(message.size()));
 
         std::string full = what;
         full += " failed";
-        if (copy_code == STABLE_FLUIDS_SUCCESS && !message.empty() && message[0] != '\0') {
+        if (copy_code == VISUAL_SIMULATION_OF_SMOKE_SUCCESS && !message.empty() && message[0] != '\0') {
             full += ": ";
             full += message.data();
         }
@@ -127,10 +118,24 @@ int main() {
     try {
         app::FieldRendererApp renderer;
         PlaybackState playback{};
-        StableFluidsSettings settings{};
-        StableFluidsRuntime runtime{};
+        VisualSmokeSettings settings{};
+        VisualSmokeRuntime runtime{};
         std::vector<vk::raii::DescriptorSet> density_descriptor_sets{};
         std::vector<SnapshotSlot> snapshot_slots{};
+
+        auto make_source = [&]() {
+            return VisualSimulationOfSmokeSourceDesc{
+                .center_x = settings.source_u * static_cast<float>(settings.desc.nx),
+                .center_y = settings.source_v * static_cast<float>(settings.desc.ny),
+                .center_z = settings.source_w * static_cast<float>(settings.desc.nz),
+                .radius = settings.source_radius,
+                .density_amount = settings.density_amount,
+                .temperature_amount = settings.temperature_amount,
+                .velocity_x = settings.velocity_x,
+                .velocity_y = settings.velocity_y,
+                .velocity_z = settings.velocity_z,
+            };
+        };
 
         auto active_snapshot = [&]() -> std::optional<app::VolumeFieldView> {
             if (runtime.active_snapshot_slot < 0) {
@@ -152,9 +157,6 @@ int main() {
         auto destroy_backend = [&]() {
             renderer.vk_context().device.waitIdle();
 
-            if (runtime.snapshot_stream != nullptr) {
-                cudaStreamSynchronize(runtime.snapshot_stream);
-            }
             if (runtime.sim_stream != nullptr) {
                 cudaStreamSynchronize(runtime.sim_stream);
             }
@@ -173,47 +175,20 @@ int main() {
                     slot.external_memory = nullptr;
                 }
                 slot.buffer_view = {};
-                slot.pending = false;
-                slot.pending_generation = 0;
                 slot.ready_generation = 0;
                 slot.last_used_submit_serial = 0;
             }
             snapshot_slots.clear();
 
-            if (runtime.step_complete_event != nullptr) {
-                cudaEventDestroy(runtime.step_complete_event);
-                runtime.step_complete_event = nullptr;
-            }
-            if (runtime.snapshot_stream != nullptr) {
-                cudaStreamDestroy(runtime.snapshot_stream);
-                runtime.snapshot_stream = nullptr;
-            }
             if (runtime.sim_stream != nullptr) {
                 cudaStreamDestroy(runtime.sim_stream);
                 runtime.sim_stream = nullptr;
             }
-            if (runtime.density != nullptr) {
-                cudaFree(runtime.density);
-                runtime.density = nullptr;
-            }
-            if (runtime.velocity_x != nullptr) {
-                cudaFree(runtime.velocity_x);
-                runtime.velocity_x = nullptr;
-            }
-            if (runtime.velocity_y != nullptr) {
-                cudaFree(runtime.velocity_y);
-                runtime.velocity_y = nullptr;
-            }
-            if (runtime.velocity_z != nullptr) {
-                cudaFree(runtime.velocity_z);
-                runtime.velocity_z = nullptr;
-            }
             if (runtime.context != nullptr) {
-                stable_fluids_context_destroy(runtime.context);
+                visual_simulation_of_smoke_context_destroy(runtime.context);
                 runtime.context = nullptr;
             }
 
-            runtime.fields = {};
             runtime.field_bytes = 0;
             runtime.snapshot_generation = 0;
             runtime.submit_serial = 0;
@@ -225,48 +200,27 @@ int main() {
         auto reset_backend = [&]() {
             const auto timeline_features = renderer.vk_context().physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
             if (!timeline_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) {
-                throw std::runtime_error("001-stable-fluids backend requires Vulkan timeline semaphore support");
+                throw std::runtime_error("002-visual-simulation-of-smoke backend requires Vulkan timeline semaphore support");
             }
 
             int cuda_device_index = 0;
             cuda_ok(cudaGetDevice(&cuda_device_index), "cudaGetDevice");
             int cuda_timeline_semaphore_interop_supported = 0;
-            cuda_ok(
-                cudaDeviceGetAttribute(
-                    &cuda_timeline_semaphore_interop_supported,
-                    cudaDevAttrTimelineSemaphoreInteropSupported,
-                    cuda_device_index),
-                "cudaDeviceGetAttribute cudaDevAttrTimelineSemaphoreInteropSupported");
+            cuda_ok(cudaDeviceGetAttribute(&cuda_timeline_semaphore_interop_supported, cudaDevAttrTimelineSemaphoreInteropSupported, cuda_device_index), "cudaDeviceGetAttribute cudaDevAttrTimelineSemaphoreInteropSupported");
             if (cuda_timeline_semaphore_interop_supported == 0) {
-                throw std::runtime_error("001-stable-fluids backend requires CUDA timeline semaphore interop support");
+                throw std::runtime_error("002-visual-simulation-of-smoke backend requires CUDA timeline semaphore interop support");
             }
 
             destroy_backend();
             density_descriptor_sets = renderer.allocate_density_descriptor_sets(snapshot_slot_count);
 
-            runtime.context = stable_fluids_context_create(&settings.desc);
+            runtime.context = visual_simulation_of_smoke_context_create(&settings.desc);
             if (runtime.context == nullptr) {
-                stable_ok(STABLE_FLUIDS_ERROR_RUNTIME, "stable_fluids_context_create", nullptr);
+                smoke_ok(VISUAL_SIMULATION_OF_SMOKE_ERROR_RUNTIME, "visual_simulation_of_smoke_context_create");
             }
 
-            runtime.field_bytes = stable_fluids_context_required_scalar_field_bytes(runtime.context);
-
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&runtime.density), runtime.field_bytes), "cudaMalloc density");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&runtime.velocity_x), runtime.field_bytes), "cudaMalloc velocity_x");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&runtime.velocity_y), runtime.field_bytes), "cudaMalloc velocity_y");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&runtime.velocity_z), runtime.field_bytes), "cudaMalloc velocity_z");
-
-            runtime.fields.density = make_device_buffer_view(runtime.density, runtime.field_bytes);
-            runtime.fields.velocity_x = make_device_buffer_view(runtime.velocity_x, runtime.field_bytes);
-            runtime.fields.velocity_y = make_device_buffer_view(runtime.velocity_y, runtime.field_bytes);
-            runtime.fields.velocity_z = make_device_buffer_view(runtime.velocity_z, runtime.field_bytes);
-
             cuda_ok(cudaStreamCreateWithFlags(&runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags sim_stream");
-            cuda_ok(cudaStreamCreateWithFlags(&runtime.snapshot_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags snapshot_stream");
-            cuda_ok(cudaEventCreateWithFlags(&runtime.step_complete_event, cudaEventDisableTiming), "cudaEventCreateWithFlags step_complete_event");
-
-            stable_ok(stable_fluids_fields_clear_async(runtime.context, &runtime.fields, runtime.sim_stream), "stable_fluids_fields_clear_async", runtime.context);
-            cuda_ok(cudaStreamSynchronize(runtime.sim_stream), "cudaStreamSynchronize clear");
+            runtime.field_bytes = visual_simulation_of_smoke_context_required_density_bytes(runtime.context);
 
             snapshot_slots.clear();
             snapshot_slots.reserve(snapshot_slot_count);
@@ -366,51 +320,26 @@ int main() {
                     .pBufferInfo = &density_info,
                 };
                 renderer.vk_context().device.updateDescriptorSets(density_write, {});
-
                 snapshot_slots.push_back(std::move(slot));
             }
 
-            const float source_x = settings.source_u * static_cast<float>(std::max(settings.desc.nx - 1, 0));
-            const float source_y = settings.source_v * static_cast<float>(std::max(settings.desc.ny - 1, 0));
-            const float source_z = settings.source_w * static_cast<float>(std::max(settings.desc.nz - 1, 0));
+            smoke_ok(visual_simulation_of_smoke_clear_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_clear_async", runtime.context);
+            if (settings.emit_source) {
+                const auto source = make_source();
+                smoke_ok(visual_simulation_of_smoke_add_source_async(runtime.context, &source, runtime.sim_stream), "visual_simulation_of_smoke_add_source_async", runtime.context);
+                smoke_ok(visual_simulation_of_smoke_step_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_step_async", runtime.context);
+            }
 
-            StableFluidsDensitySplatDesc density_splat{};
-            density_splat.center_x = source_x;
-            density_splat.center_y = source_y;
-            density_splat.center_z = source_z;
-            density_splat.radius = settings.density_radius;
-            density_splat.amount = settings.density_amount;
-            stable_ok(stable_fluids_fields_add_density_splat_async(runtime.context, &runtime.fields, &density_splat, runtime.sim_stream), "stable_fluids_fields_add_density_splat_async", runtime.context);
-
-            StableFluidsForceSplatDesc force_splat{};
-            force_splat.center_x = source_x;
-            force_splat.center_y = source_y;
-            force_splat.center_z = source_z;
-            force_splat.radius = settings.force_radius;
-            force_splat.force_x = settings.force_x;
-            force_splat.force_y = settings.force_y;
-            force_splat.force_z = settings.force_z;
-            stable_ok(stable_fluids_fields_add_force_splat_async(runtime.context, &runtime.fields, &force_splat, runtime.sim_stream), "stable_fluids_fields_add_force_splat_async", runtime.context);
-            stable_ok(stable_fluids_fields_step_async(runtime.context, &runtime.fields, runtime.sim_stream), "stable_fluids_fields_step_async", runtime.context);
-            cuda_ok(cudaEventRecord(runtime.step_complete_event, runtime.sim_stream), "cudaEventRecord initial_step_complete_event");
-            cuda_ok(cudaStreamWaitEvent(runtime.snapshot_stream, runtime.step_complete_event, 0), "cudaStreamWaitEvent initial_snapshot");
-            stable_ok(stable_fluids_fields_snapshot_density_async(runtime.context, &runtime.fields, snapshot_slots[0].buffer_view, runtime.snapshot_stream), "stable_fluids_fields_snapshot_density_async", runtime.context);
-
-            const uint64_t initial_generation = runtime.snapshot_generation + 1;
-            cudaExternalSemaphoreSignalParams initial_signal_params{};
-            initial_signal_params.params.fence.value = initial_generation;
-            cuda_ok(
-                cudaSignalExternalSemaphoresAsync(
-                    &snapshot_slots[0].external_semaphore,
-                    &initial_signal_params,
-                    1,
-                    runtime.snapshot_stream),
-                "cudaSignalExternalSemaphoresAsync initial_snapshot");
-            cuda_ok(cudaStreamSynchronize(runtime.snapshot_stream), "cudaStreamSynchronize initial_snapshot");
+            smoke_ok(visual_simulation_of_smoke_snapshot_density_async(runtime.context, snapshot_slots[0].buffer_view, runtime.sim_stream), "visual_simulation_of_smoke_snapshot_density_async", runtime.context);
+            const uint64_t initial_generation = 1;
+            cudaExternalSemaphoreSignalParams signal_params{};
+            signal_params.params.fence.value = initial_generation;
+            cuda_ok(cudaSignalExternalSemaphoresAsync(&snapshot_slots[0].external_semaphore, &signal_params, 1, runtime.sim_stream), "cudaSignalExternalSemaphoresAsync initial_snapshot");
+            cuda_ok(cudaStreamSynchronize(runtime.sim_stream), "cudaStreamSynchronize initial_snapshot");
             runtime.snapshot_generation = initial_generation;
             snapshot_slots[0].ready_generation = initial_generation;
             runtime.active_snapshot_slot = 0;
-            runtime.active_snapshot_generation = snapshot_slots[0].ready_generation;
+            runtime.active_snapshot_generation = initial_generation;
             runtime.steps_since_snapshot = 0;
 
             if (const auto field = active_snapshot()) {
@@ -425,7 +354,7 @@ int main() {
 
             bool reset_requested = false;
             ImGui::Begin("Simulation");
-            ImGui::TextUnformatted("Backend: 001-stable-fluids");
+            ImGui::TextUnformatted("Backend: 002-visual-simulation-of-smoke");
             ImGui::Checkbox("Pause Simulation", &playback.paused);
             if (ImGui::Button("Single Step")) {
                 playback.step_once = true;
@@ -436,28 +365,32 @@ int main() {
             }
             ImGui::SliderInt("Sim Steps / Frame", &playback.sim_steps_per_frame, 1, 8);
             ImGui::SliderInt("Snapshot Interval", &playback.snapshot_interval, 1, 8);
-            if (ImGui::SliderInt("Grid X", &settings.desc.nx, 32, 256)) reset_requested = true;
-            if (ImGui::SliderInt("Grid Y", &settings.desc.ny, 32, 256)) reset_requested = true;
-            if (ImGui::SliderInt("Grid Z", &settings.desc.nz, 32, 256)) reset_requested = true;
+            if (ImGui::SliderInt("Grid X", &settings.desc.nx, 16, 192)) reset_requested = true;
+            if (ImGui::SliderInt("Grid Y", &settings.desc.ny, 16, 192)) reset_requested = true;
+            if (ImGui::SliderInt("Grid Z", &settings.desc.nz, 16, 192)) reset_requested = true;
             if (ImGui::SliderFloat("Dt", &settings.desc.dt, 1.0f / 240.0f, 1.0f / 24.0f, "%.5f")) reset_requested = true;
             if (ImGui::SliderFloat("Cell Size", &settings.desc.cell_size, 0.25f, 2.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Viscosity", &settings.desc.viscosity, 0.0f, 0.002f, "%.5f")) reset_requested = true;
-            if (ImGui::SliderFloat("Diffusion", &settings.desc.diffusion, 0.0f, 0.002f, "%.5f")) reset_requested = true;
-            if (ImGui::SliderInt("Diffuse Iterations", &settings.desc.diffuse_iterations, 1, 32)) reset_requested = true;
-            if (ImGui::SliderInt("Pressure Iterations", &settings.desc.pressure_iterations, 1, 64)) reset_requested = true;
-            if (ImGui::SliderFloat("Pressure Tolerance", &settings.desc.pressure_tolerance, 1.0e-7f, 1.0e-3f, "%.6f", ImGuiSliderFlags_Logarithmic)) reset_requested = true;
+            if (ImGui::SliderFloat("Ambient Temp", &settings.desc.ambient_temperature, -2.0f, 2.0f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Density Buoyancy", &settings.desc.density_buoyancy, 0.0f, 0.2f, "%.4f")) reset_requested = true;
+            if (ImGui::SliderFloat("Temperature Buoyancy", &settings.desc.temperature_buoyancy, 0.0f, 0.4f, "%.4f")) reset_requested = true;
+            if (ImGui::SliderFloat("Vorticity Epsilon", &settings.desc.vorticity_epsilon, 0.0f, 6.0f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderInt("Pressure Iterations", &settings.desc.pressure_iterations, 8, 160)) reset_requested = true;
+            bool use_monotonic_cubic = settings.desc.use_monotonic_cubic != 0u;
+            if (ImGui::Checkbox("Monotonic Cubic", &use_monotonic_cubic)) {
+                settings.desc.use_monotonic_cubic = use_monotonic_cubic ? 1u : 0u;
+                reset_requested = true;
+            }
             ImGui::Separator();
-            ImGui::Checkbox("Emit Density", &settings.emit_density);
-            ImGui::Checkbox("Emit Force", &settings.emit_force);
+            ImGui::Checkbox("Emit Source", &settings.emit_source);
             ImGui::SliderFloat("Source U", &settings.source_u, 0.0f, 1.0f, "%.2f");
             ImGui::SliderFloat("Source V", &settings.source_v, 0.0f, 1.0f, "%.2f");
             ImGui::SliderFloat("Source W", &settings.source_w, 0.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("Density Radius", &settings.density_radius, 1.0f, 16.0f, "%.1f");
-            ImGui::SliderFloat("Density Amount", &settings.density_amount, 0.1f, 8.0f, "%.2f");
-            ImGui::SliderFloat("Force Radius", &settings.force_radius, 1.0f, 20.0f, "%.1f");
-            ImGui::SliderFloat("Force X", &settings.force_x, -4.0f, 4.0f, "%.2f");
-            ImGui::SliderFloat("Force Y", &settings.force_y, -4.0f, 4.0f, "%.2f");
-            ImGui::SliderFloat("Force Z", &settings.force_z, -4.0f, 4.0f, "%.2f");
+            ImGui::SliderFloat("Source Radius", &settings.source_radius, 1.0f, 16.0f, "%.1f");
+            ImGui::SliderFloat("Density Amount", &settings.density_amount, 0.0f, 3.0f, "%.2f");
+            ImGui::SliderFloat("Temperature Amount", &settings.temperature_amount, 0.0f, 4.0f, "%.2f");
+            ImGui::SliderFloat("Velocity X", &settings.velocity_x, -3.0f, 3.0f, "%.2f");
+            ImGui::SliderFloat("Velocity Y", &settings.velocity_y, -3.0f, 3.0f, "%.2f");
+            ImGui::SliderFloat("Velocity Z", &settings.velocity_z, -3.0f, 3.0f, "%.2f");
             ImGui::End();
 
             if (reset_requested) {
@@ -465,35 +398,13 @@ int main() {
             } else {
                 const bool run_simulation = !playback.paused || playback.step_once;
                 if (run_simulation) {
-                    const float source_x = settings.source_u * static_cast<float>(std::max(settings.desc.nx - 1, 0));
-                    const float source_y = settings.source_v * static_cast<float>(std::max(settings.desc.ny - 1, 0));
-                    const float source_z = settings.source_w * static_cast<float>(std::max(settings.desc.nz - 1, 0));
-
                     for (int sim_step = 0; sim_step < playback.sim_steps_per_frame; ++sim_step) {
-                        if (settings.emit_density) {
-                            StableFluidsDensitySplatDesc density_splat{};
-                            density_splat.center_x = source_x;
-                            density_splat.center_y = source_y;
-                            density_splat.center_z = source_z;
-                            density_splat.radius = settings.density_radius;
-                            density_splat.amount = settings.density_amount;
-                            stable_ok(stable_fluids_fields_add_density_splat_async(runtime.context, &runtime.fields, &density_splat, runtime.sim_stream), "stable_fluids_fields_add_density_splat_async", runtime.context);
+                        if (settings.emit_source) {
+                            const auto source = make_source();
+                            smoke_ok(visual_simulation_of_smoke_add_source_async(runtime.context, &source, runtime.sim_stream), "visual_simulation_of_smoke_add_source_async", runtime.context);
                         }
 
-                        if (settings.emit_force) {
-                            StableFluidsForceSplatDesc force_splat{};
-                            force_splat.center_x = source_x;
-                            force_splat.center_y = source_y;
-                            force_splat.center_z = source_z;
-                            force_splat.radius = settings.force_radius;
-                            force_splat.force_x = settings.force_x;
-                            force_splat.force_y = settings.force_y;
-                            force_splat.force_z = settings.force_z;
-                            stable_ok(stable_fluids_fields_add_force_splat_async(runtime.context, &runtime.fields, &force_splat, runtime.sim_stream), "stable_fluids_fields_add_force_splat_async", runtime.context);
-                        }
-
-                        stable_ok(stable_fluids_fields_step_async(runtime.context, &runtime.fields, runtime.sim_stream), "stable_fluids_fields_step_async", runtime.context);
-                        cuda_ok(cudaEventRecord(runtime.step_complete_event, runtime.sim_stream), "cudaEventRecord step_complete_event");
+                        smoke_ok(visual_simulation_of_smoke_step_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_step_async", runtime.context);
 
                         if (runtime.steps_since_snapshot < static_cast<uint32_t>(playback.snapshot_interval)) {
                             ++runtime.steps_since_snapshot;
@@ -502,14 +413,10 @@ int main() {
                             int snapshot_slot_index = -1;
                             for (uint32_t slot_index = 0; slot_index < snapshot_slots.size(); ++slot_index) {
                                 auto& slot = snapshot_slots[slot_index];
-                                if (slot.pending) {
-                                    continue;
-                                }
                                 if (static_cast<int>(slot_index) == runtime.active_snapshot_slot) {
                                     continue;
                                 }
-                                if (slot.ready_generation != 0 &&
-                                    runtime.submit_serial < slot.last_used_submit_serial + renderer.frames_in_flight() + 1) {
+                                if (slot.ready_generation != 0 && runtime.submit_serial < slot.last_used_submit_serial + renderer.frames_in_flight() + 1) {
                                     continue;
                                 }
                                 snapshot_slot_index = static_cast<int>(slot_index);
@@ -518,21 +425,16 @@ int main() {
 
                             if (snapshot_slot_index >= 0) {
                                 auto& slot = snapshot_slots[static_cast<size_t>(snapshot_slot_index)];
+                                smoke_ok(visual_simulation_of_smoke_snapshot_density_async(runtime.context, slot.buffer_view, runtime.sim_stream), "visual_simulation_of_smoke_snapshot_density_async", runtime.context);
                                 const uint64_t next_generation = runtime.snapshot_generation + 1;
-                                cuda_ok(cudaStreamWaitEvent(runtime.snapshot_stream, runtime.step_complete_event, 0), "cudaStreamWaitEvent snapshot_stream");
-                                stable_ok(stable_fluids_fields_snapshot_density_async(runtime.context, &runtime.fields, slot.buffer_view, runtime.snapshot_stream), "stable_fluids_fields_snapshot_density_async", runtime.context);
-                                slot.pending = true;
-                                slot.pending_generation = next_generation;
                                 cudaExternalSemaphoreSignalParams signal_params{};
                                 signal_params.params.fence.value = next_generation;
-                                cuda_ok(
-                                    cudaSignalExternalSemaphoresAsync(
-                                        &slot.external_semaphore,
-                                        &signal_params,
-                                        1,
-                                        runtime.snapshot_stream),
-                                    "cudaSignalExternalSemaphoresAsync snapshot");
+                                cuda_ok(cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, runtime.sim_stream), "cudaSignalExternalSemaphoresAsync snapshot");
+                                cuda_ok(cudaStreamSynchronize(runtime.sim_stream), "cudaStreamSynchronize snapshot");
+                                slot.ready_generation = next_generation;
                                 runtime.snapshot_generation = next_generation;
+                                runtime.active_snapshot_generation = next_generation;
+                                runtime.active_snapshot_slot = snapshot_slot_index;
                                 runtime.steps_since_snapshot = 0;
                             }
                         }
@@ -541,21 +443,6 @@ int main() {
             }
 
             playback.step_once = false;
-
-            for (size_t slot_index = 0; slot_index < snapshot_slots.size(); ++slot_index) {
-                auto& slot = snapshot_slots[slot_index];
-                if (!slot.pending) {
-                    continue;
-                }
-                if (slot.timeline_semaphore.getCounterValue() >= slot.pending_generation) {
-                    slot.pending = false;
-                    slot.ready_generation = slot.pending_generation;
-                    if (slot.ready_generation >= runtime.active_snapshot_generation) {
-                        runtime.active_snapshot_generation = slot.ready_generation;
-                        runtime.active_snapshot_slot = static_cast<int>(slot_index);
-                    }
-                }
-            }
 
             const auto field = active_snapshot();
             renderer.draw_renderer_ui(field);
