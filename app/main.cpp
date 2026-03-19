@@ -16,10 +16,9 @@ import app;
 import std;
 import vk.memory;
 
-int32_t app_compute_collocated_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
 int32_t app_compute_staggered_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
-int32_t app_add_stable_density_splat_async(void* density, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float amount, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
-int32_t app_add_stable_force_splat_async(void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float force_x, float force_y, float force_z, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
+int32_t app_add_stable_source_async(void* density, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z, int32_t block_x, int32_t block_y,
+    int32_t block_z, void* cuda_stream);
 int32_t app_add_visual_source_async(void* density, void* temperature, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float temperature_amount, float velocity_source_x, float velocity_source_y,
     float velocity_source_z, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
 
@@ -99,17 +98,16 @@ namespace {
 
     struct StableSettings {
         StableStepConfig desc{};
-        int selected_field   = 0;
-        bool emit_density    = true;
-        bool emit_force      = true;
-        float source_u       = 0.5f;
-        float source_v       = 0.33f;
-        float source_w       = 0.5f;
-        float source_radius  = 5.0f;
+        int selected_field = 0;
+        bool emit_source   = true;
+        float source_u     = 0.5f;
+        float source_v     = 0.33f;
+        float source_w     = 0.5f;
+        float source_radius = 5.0f;
         float density_amount = 6.0f;
-        float force_x        = 1.25f;
-        float force_y        = 2.5f;
-        float force_z        = 0.75f;
+        float velocity_x     = 1.25f;
+        float velocity_y     = 2.5f;
+        float velocity_z     = 0.75f;
     };
 
     struct StableRuntime {
@@ -221,10 +219,9 @@ int main() {
         std::vector<SnapshotSlot> snapshot_slots{};
 
         auto scalar_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
-        auto stable_temporary_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 2) * static_cast<uint64_t>(ny + 2) * static_cast<uint64_t>(nz + 2) * sizeof(float); };
-        auto visual_velocity_x_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
-        auto visual_velocity_y_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
-        auto visual_velocity_z_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
+        auto velocity_x_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto velocity_y_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto velocity_z_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
 
         auto current_fields = [&]() -> std::span<const FieldChoice> { return backend_kind == BackendKind::StableFluids001 ? std::span<const FieldChoice>(stable_fields) : std::span<const FieldChoice>(visual_fields); };
 
@@ -625,9 +622,9 @@ int main() {
                 if (field.id == FieldId::Density) {
                     cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, stable_runtime.sim_stream), "cudaMemcpyAsync stable density snapshot");
                 } else {
-                    stable_ok(app_compute_collocated_velocity_magnitude_async(slot.cuda_ptr, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z,
+                    stable_ok(app_compute_staggered_velocity_magnitude_async(slot.cuda_ptr, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z,
                                   stable_runtime.sim_stream),
-                        "app_compute_collocated_velocity_magnitude_async");
+                        "app_compute_staggered_velocity_magnitude_async");
                 }
             } else {
                 if (field.id == FieldId::Density) {
@@ -671,39 +668,41 @@ int main() {
             destroy_everything();
 
             if (backend_kind == BackendKind::StableFluids001) {
-                viewer_runtime.field_bytes       = scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
-                const auto temporary_field_bytes = stable_temporary_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
+                viewer_runtime.field_bytes     = scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
+                const auto stable_velocity_x_bytes = velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
+                const auto stable_velocity_y_bytes = velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
+                const auto stable_velocity_z_bytes = velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), viewer_runtime.field_bytes), "cudaMalloc stable density");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), viewer_runtime.field_bytes), "cudaMalloc stable velocity_x");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), viewer_runtime.field_bytes), "cudaMalloc stable velocity_y");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), viewer_runtime.field_bytes), "cudaMalloc stable velocity_z");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_density), temporary_field_bytes), "cudaMalloc stable temporary_density");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_x), temporary_field_bytes), "cudaMalloc stable temporary_velocity_x");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_y), temporary_field_bytes), "cudaMalloc stable temporary_velocity_y");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_z), temporary_field_bytes), "cudaMalloc stable temporary_velocity_z");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_density), temporary_field_bytes), "cudaMalloc stable temporary_previous_density");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_x), temporary_field_bytes), "cudaMalloc stable temporary_previous_velocity_x");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_y), temporary_field_bytes), "cudaMalloc stable temporary_previous_velocity_y");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_z), temporary_field_bytes), "cudaMalloc stable temporary_previous_velocity_z");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), temporary_field_bytes), "cudaMalloc stable temporary_pressure");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), temporary_field_bytes), "cudaMalloc stable temporary_divergence");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), stable_velocity_x_bytes), "cudaMalloc stable velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), stable_velocity_y_bytes), "cudaMalloc stable velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), stable_velocity_z_bytes), "cudaMalloc stable velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_density), viewer_runtime.field_bytes), "cudaMalloc stable temporary_density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_density), viewer_runtime.field_bytes), "cudaMalloc stable temporary_previous_density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_previous_velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_previous_velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_previous_velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc stable temporary_pressure");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc stable temporary_divergence");
             } else {
                 viewer_runtime.field_bytes  = scalar_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
-                const auto velocity_x_bytes = visual_velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
-                const auto velocity_y_bytes = visual_velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
-                const auto velocity_z_bytes = visual_velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                const auto visual_velocity_x_bytes = velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                const auto visual_velocity_y_bytes = velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                const auto visual_velocity_z_bytes = velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 cuda_ok(cudaStreamCreateWithFlags(&visual_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags visual_stream");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.density), viewer_runtime.field_bytes), "cudaMalloc visual density");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temperature), viewer_runtime.field_bytes), "cudaMalloc visual temperature");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_x), velocity_x_bytes), "cudaMalloc visual velocity_x");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_y), velocity_y_bytes), "cudaMalloc visual velocity_y");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_z), velocity_z_bytes), "cudaMalloc visual velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_x), visual_velocity_x_bytes), "cudaMalloc visual velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_y), visual_velocity_y_bytes), "cudaMalloc visual velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_z), visual_velocity_z_bytes), "cudaMalloc visual velocity_z");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_density), viewer_runtime.field_bytes), "cudaMalloc visual temporary_previous_density");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_temperature), viewer_runtime.field_bytes), "cudaMalloc visual temporary_previous_temperature");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_x), velocity_x_bytes), "cudaMalloc visual temporary_previous_velocity_x");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_y), velocity_y_bytes), "cudaMalloc visual temporary_previous_velocity_y");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_z), velocity_z_bytes), "cudaMalloc visual temporary_previous_velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_x), visual_velocity_x_bytes), "cudaMalloc visual temporary_previous_velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_y), visual_velocity_y_bytes), "cudaMalloc visual temporary_previous_velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_z), visual_velocity_z_bytes), "cudaMalloc visual temporary_previous_velocity_z");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc visual temporary_pressure");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc visual temporary_divergence");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_x), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_x");
@@ -719,26 +718,17 @@ int main() {
 
             if (backend_kind == BackendKind::StableFluids001) {
                 cuda_ok(cudaMemsetAsync(stable_runtime.density, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable density");
-                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_x, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_x");
-                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_y, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_y");
-                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_z, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_z");
-                if (stable_settings.emit_density) {
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_x, 0, velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_x");
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_y, 0, velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_y");
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_z, 0, velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_z");
+                if (stable_settings.emit_source) {
                     const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                     const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                     const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                    stable_ok(app_add_stable_density_splat_async(stable_runtime.density, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z,
+                    stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.velocity_x,
+                                  stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z,
                                   stable_runtime.sim_stream),
-                        "app_add_stable_density_splat_async");
-                }
-                if (stable_settings.emit_force) {
-                    const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
-                    const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
-                    const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                    stable_ok(app_add_stable_force_splat_async(stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.force_x, stable_settings.force_y,
-                                  stable_settings.force_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
-                        "app_add_stable_force_splat_async");
-                }
-                if (stable_settings.emit_density || stable_settings.emit_force) {
+                        "app_add_stable_source_async");
                     stable_ok(stable_fluids_step_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, stable_settings.desc.cell_size, stable_runtime.temporary_density, stable_runtime.temporary_velocity_x,
                                   stable_runtime.temporary_velocity_y, stable_runtime.temporary_velocity_z, stable_runtime.temporary_previous_density, stable_runtime.temporary_previous_velocity_x, stable_runtime.temporary_previous_velocity_y, stable_runtime.temporary_previous_velocity_z, stable_runtime.temporary_pressure, stable_runtime.temporary_divergence,
                                   stable_settings.desc.dt, stable_settings.desc.viscosity, stable_settings.desc.diffusion, stable_settings.desc.diffuse_iterations, stable_settings.desc.pressure_iterations, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
@@ -747,9 +737,9 @@ int main() {
             } else {
                 cuda_ok(cudaMemsetAsync(visual_runtime.density, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual density");
                 cuda_ok(cudaMemsetAsync(visual_runtime.temperature, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual temperature");
-                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_x, 0, visual_velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_x");
-                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_y, 0, visual_velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_y");
-                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_z, 0, visual_velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_z");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_x, 0, velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_x");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_y, 0, velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_y");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_z, 0, velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_z");
                 if (visual_settings.emit_source) {
                     const float center_x = visual_settings.source_u * static_cast<float>(visual_settings.desc.nx);
                     const float center_y = visual_settings.source_v * static_cast<float>(visual_settings.desc.ny);
@@ -835,16 +825,15 @@ int main() {
                 if (ImGui::SliderInt("Diffuse Iterations", &stable_settings.desc.diffuse_iterations, 1, 64)) reset_requested = true;
                 if (ImGui::SliderInt("Pressure Iterations", &stable_settings.desc.pressure_iterations, 4, 192)) reset_requested = true;
                 ImGui::Separator();
-                ImGui::Checkbox("Emit Density", &stable_settings.emit_density);
-                ImGui::Checkbox("Emit Force", &stable_settings.emit_force);
+                ImGui::Checkbox("Emit Source", &stable_settings.emit_source);
                 ImGui::SliderFloat("Source U", &stable_settings.source_u, 0.0f, 1.0f, "%.2f");
                 ImGui::SliderFloat("Source V", &stable_settings.source_v, 0.0f, 1.0f, "%.2f");
                 ImGui::SliderFloat("Source W", &stable_settings.source_w, 0.0f, 1.0f, "%.2f");
                 ImGui::SliderFloat("Source Radius", &stable_settings.source_radius, 1.0f, 16.0f, "%.1f");
                 ImGui::SliderFloat("Density Amount", &stable_settings.density_amount, 0.0f, 12.0f, "%.2f");
-                ImGui::SliderFloat("Force X", &stable_settings.force_x, -4.0f, 4.0f, "%.2f");
-                ImGui::SliderFloat("Force Y", &stable_settings.force_y, -4.0f, 4.0f, "%.2f");
-                ImGui::SliderFloat("Force Z", &stable_settings.force_z, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Velocity X", &stable_settings.velocity_x, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Velocity Y", &stable_settings.velocity_y, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Velocity Z", &stable_settings.velocity_z, -4.0f, 4.0f, "%.2f");
             } else {
                 ImGui::TextUnformatted("Backend Parameters: 002-visual-simulation-of-smoke");
                 if (ImGui::SliderInt("Grid X", &visual_settings.desc.nx, 16, 192)) reset_requested = true;
@@ -890,23 +879,14 @@ int main() {
                     nvtx3::scoped_range sim_range{"smoke_app.simulation"};
                     for (int sim_step = 0; sim_step < playback.sim_steps_per_frame; ++sim_step) {
                         if (backend_kind == BackendKind::StableFluids001) {
-                            if (stable_settings.emit_density) {
-                                nvtx3::scoped_range range{"smoke_app.simulation.add_density"};
+                            if (stable_settings.emit_source) {
+                                nvtx3::scoped_range range{"smoke_app.simulation.add_source"};
                                 const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                                 const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                                 const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                                stable_ok(app_add_stable_density_splat_async(stable_runtime.density, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.desc.block_x, stable_settings.desc.block_y,
-                                              stable_settings.desc.block_z, stable_runtime.sim_stream),
-                                    "app_add_stable_density_splat_async");
-                            }
-                            if (stable_settings.emit_force) {
-                                nvtx3::scoped_range range{"smoke_app.simulation.add_force"};
-                                const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
-                                const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
-                                const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                                stable_ok(app_add_stable_force_splat_async(stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.force_x, stable_settings.force_y,
-                                              stable_settings.force_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
-                                    "app_add_stable_force_splat_async");
+                                stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
+                                              stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
+                                    "app_add_stable_source_async");
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};
