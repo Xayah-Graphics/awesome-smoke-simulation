@@ -170,28 +170,14 @@ namespace {
         if (code == STABLE_FLUIDS_SUCCESS) {
             return;
         }
-
-        std::string full = what;
-        full += " failed";
-        if (const char* message = stable_fluids_last_error(); message != nullptr && message[0] != '\0') {
-            full += ": ";
-            full += message;
-        }
-        throw std::runtime_error(full);
+        throw std::runtime_error(std::string(what) + " failed");
     }
 
     auto smoke_ok(const int32_t code, const char* what) {
         if (code == VISUAL_SIMULATION_OF_SMOKE_SUCCESS) {
             return;
         }
-
-        std::string full = what;
-        full += " failed";
-        if (const char* message = visual_simulation_of_smoke_last_error(); message != nullptr && message[0] != '\0') {
-            full += ": ";
-            full += message;
-        }
-        throw std::runtime_error(full);
+        throw std::runtime_error(std::string(what) + " failed");
     }
 
 } // namespace
