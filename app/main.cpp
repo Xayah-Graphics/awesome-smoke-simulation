@@ -16,6 +16,9 @@ import app;
 import std;
 import vk.memory;
 
+int32_t app_compute_collocated_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
+int32_t app_compute_staggered_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
+
 namespace {
 
     constexpr uint32_t snapshot_slot_count = 4;
@@ -614,7 +617,9 @@ int main() {
                 if (field.id == FieldId::Density) {
                     cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, stable_runtime.sim_stream), "cudaMemcpyAsync stable density snapshot");
                 } else {
-                    stable_ok(stable_fluids_compute_velocity_magnitude_async(stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, slot.cuda_ptr, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), stable_runtime.sim_stream), "stable_fluids_compute_velocity_magnitude_async");
+                    stable_ok(app_compute_collocated_velocity_magnitude_async(slot.cuda_ptr, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z,
+                                  stable_runtime.sim_stream),
+                        "app_compute_collocated_velocity_magnitude_async");
                 }
             } else {
                 if (field.id == FieldId::Density) {
@@ -622,9 +627,9 @@ int main() {
                 } else if (field.id == FieldId::Temperature) {
                     cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temperature, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual temperature snapshot");
                 } else {
-                    smoke_ok(visual_simulation_of_smoke_compute_velocity_magnitude_async(
-                                 visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, slot.cuda_ptr, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
-                        "visual_simulation_of_smoke_compute_velocity_magnitude_async");
+                    smoke_ok(app_compute_staggered_velocity_magnitude_async(slot.cuda_ptr, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z,
+                                 visual_runtime.sim_stream),
+                        "app_compute_staggered_velocity_magnitude_async");
                 }
             }
 
