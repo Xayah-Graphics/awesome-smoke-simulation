@@ -729,10 +729,37 @@ int main() {
                                   stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z,
                                   stable_runtime.sim_stream),
                         "app_add_stable_source_async");
-                    stable_ok(stable_fluids_step_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, stable_settings.desc.cell_size, stable_runtime.temporary_density, stable_runtime.temporary_velocity_x,
-                                  stable_runtime.temporary_velocity_y, stable_runtime.temporary_velocity_z, stable_runtime.temporary_previous_density, stable_runtime.temporary_previous_velocity_x, stable_runtime.temporary_previous_velocity_y, stable_runtime.temporary_previous_velocity_z, stable_runtime.temporary_pressure, stable_runtime.temporary_divergence,
-                                  stable_settings.desc.dt, stable_settings.desc.viscosity, stable_settings.desc.diffusion, stable_settings.desc.diffuse_iterations, stable_settings.desc.pressure_iterations, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
-                        "stable_fluids_step_async");
+                    StableFluidsStepDesc step_desc{};
+                    step_desc.struct_size                    = sizeof(StableFluidsStepDesc);
+                    step_desc.api_version                    = 1;
+                    step_desc.nx                             = stable_settings.desc.nx;
+                    step_desc.ny                             = stable_settings.desc.ny;
+                    step_desc.nz                             = stable_settings.desc.nz;
+                    step_desc.cell_size                      = stable_settings.desc.cell_size;
+                    step_desc.dt                             = stable_settings.desc.dt;
+                    step_desc.viscosity                      = stable_settings.desc.viscosity;
+                    step_desc.diffusion                      = stable_settings.desc.diffusion;
+                    step_desc.diffuse_iterations             = stable_settings.desc.diffuse_iterations;
+                    step_desc.pressure_iterations            = stable_settings.desc.pressure_iterations;
+                    step_desc.density                        = stable_runtime.density;
+                    step_desc.velocity_x                     = stable_runtime.velocity_x;
+                    step_desc.velocity_y                     = stable_runtime.velocity_y;
+                    step_desc.velocity_z                     = stable_runtime.velocity_z;
+                    step_desc.temporary_density              = stable_runtime.temporary_density;
+                    step_desc.temporary_velocity_x           = stable_runtime.temporary_velocity_x;
+                    step_desc.temporary_velocity_y           = stable_runtime.temporary_velocity_y;
+                    step_desc.temporary_velocity_z           = stable_runtime.temporary_velocity_z;
+                    step_desc.temporary_previous_density     = stable_runtime.temporary_previous_density;
+                    step_desc.temporary_previous_velocity_x  = stable_runtime.temporary_previous_velocity_x;
+                    step_desc.temporary_previous_velocity_y  = stable_runtime.temporary_previous_velocity_y;
+                    step_desc.temporary_previous_velocity_z  = stable_runtime.temporary_previous_velocity_z;
+                    step_desc.temporary_pressure             = stable_runtime.temporary_pressure;
+                    step_desc.temporary_divergence           = stable_runtime.temporary_divergence;
+                    step_desc.block_x                        = stable_settings.desc.block_x;
+                    step_desc.block_y                        = stable_settings.desc.block_y;
+                    step_desc.block_z                        = stable_settings.desc.block_z;
+                    step_desc.stream                         = stable_runtime.sim_stream;
+                    stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
                 }
             } else {
                 cuda_ok(cudaMemsetAsync(visual_runtime.density, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual density");
@@ -747,11 +774,44 @@ int main() {
                     smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius, visual_settings.density_amount,
                                  visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
                         "app_add_visual_source_async");
-                    smoke_ok(visual_simulation_of_smoke_step_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, visual_settings.desc.cell_size, visual_runtime.temporary_previous_density,
-                                 visual_runtime.temporary_previous_temperature, visual_runtime.temporary_previous_velocity_x, visual_runtime.temporary_previous_velocity_y, visual_runtime.temporary_previous_velocity_z, visual_runtime.temporary_pressure, visual_runtime.temporary_divergence, visual_runtime.temporary_omega_x, visual_runtime.temporary_omega_y,
-                                 visual_runtime.temporary_omega_z, visual_runtime.temporary_omega_magnitude, visual_runtime.temporary_force_x, visual_runtime.temporary_force_y, visual_runtime.temporary_force_z, visual_settings.desc.dt, visual_settings.desc.ambient_temperature, visual_settings.desc.density_buoyancy, visual_settings.desc.temperature_buoyancy,
-                                 visual_settings.desc.vorticity_epsilon, visual_settings.desc.pressure_iterations, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_settings.desc.use_monotonic_cubic, visual_runtime.sim_stream),
-                        "visual_simulation_of_smoke_step_async");
+                    VisualSimulationOfSmokeStepDesc step_desc{};
+                    step_desc.struct_size                    = sizeof(VisualSimulationOfSmokeStepDesc);
+                    step_desc.api_version                    = 1;
+                    step_desc.nx                             = visual_settings.desc.nx;
+                    step_desc.ny                             = visual_settings.desc.ny;
+                    step_desc.nz                             = visual_settings.desc.nz;
+                    step_desc.cell_size                      = visual_settings.desc.cell_size;
+                    step_desc.dt                             = visual_settings.desc.dt;
+                    step_desc.ambient_temperature            = visual_settings.desc.ambient_temperature;
+                    step_desc.density_buoyancy               = visual_settings.desc.density_buoyancy;
+                    step_desc.temperature_buoyancy           = visual_settings.desc.temperature_buoyancy;
+                    step_desc.vorticity_epsilon              = visual_settings.desc.vorticity_epsilon;
+                    step_desc.pressure_iterations            = visual_settings.desc.pressure_iterations;
+                    step_desc.use_monotonic_cubic            = visual_settings.desc.use_monotonic_cubic;
+                    step_desc.density                        = visual_runtime.density;
+                    step_desc.temperature                    = visual_runtime.temperature;
+                    step_desc.velocity_x                     = visual_runtime.velocity_x;
+                    step_desc.velocity_y                     = visual_runtime.velocity_y;
+                    step_desc.velocity_z                     = visual_runtime.velocity_z;
+                    step_desc.temporary_previous_density     = visual_runtime.temporary_previous_density;
+                    step_desc.temporary_previous_temperature = visual_runtime.temporary_previous_temperature;
+                    step_desc.temporary_previous_velocity_x  = visual_runtime.temporary_previous_velocity_x;
+                    step_desc.temporary_previous_velocity_y  = visual_runtime.temporary_previous_velocity_y;
+                    step_desc.temporary_previous_velocity_z  = visual_runtime.temporary_previous_velocity_z;
+                    step_desc.temporary_pressure             = visual_runtime.temporary_pressure;
+                    step_desc.temporary_divergence           = visual_runtime.temporary_divergence;
+                    step_desc.temporary_omega_x              = visual_runtime.temporary_omega_x;
+                    step_desc.temporary_omega_y              = visual_runtime.temporary_omega_y;
+                    step_desc.temporary_omega_z              = visual_runtime.temporary_omega_z;
+                    step_desc.temporary_omega_magnitude      = visual_runtime.temporary_omega_magnitude;
+                    step_desc.temporary_force_x              = visual_runtime.temporary_force_x;
+                    step_desc.temporary_force_y              = visual_runtime.temporary_force_y;
+                    step_desc.temporary_force_z              = visual_runtime.temporary_force_z;
+                    step_desc.block_x                        = visual_settings.desc.block_x;
+                    step_desc.block_y                        = visual_settings.desc.block_y;
+                    step_desc.block_z                        = visual_settings.desc.block_z;
+                    step_desc.stream                         = visual_runtime.sim_stream;
+                    smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
                 }
             }
 
@@ -890,11 +950,37 @@ int main() {
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};
-                                stable_ok(stable_fluids_step_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, stable_settings.desc.cell_size, stable_runtime.temporary_density, stable_runtime.temporary_velocity_x,
-                                              stable_runtime.temporary_velocity_y, stable_runtime.temporary_velocity_z, stable_runtime.temporary_previous_density, stable_runtime.temporary_previous_velocity_x, stable_runtime.temporary_previous_velocity_y, stable_runtime.temporary_previous_velocity_z, stable_runtime.temporary_pressure,
-                                              stable_runtime.temporary_divergence, stable_settings.desc.dt, stable_settings.desc.viscosity, stable_settings.desc.diffusion, stable_settings.desc.diffuse_iterations, stable_settings.desc.pressure_iterations, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z,
-                                              stable_runtime.sim_stream),
-                                    "stable_fluids_step_async");
+                                StableFluidsStepDesc step_desc{};
+                                step_desc.struct_size                    = sizeof(StableFluidsStepDesc);
+                                step_desc.api_version                    = 1;
+                                step_desc.nx                             = stable_settings.desc.nx;
+                                step_desc.ny                             = stable_settings.desc.ny;
+                                step_desc.nz                             = stable_settings.desc.nz;
+                                step_desc.cell_size                      = stable_settings.desc.cell_size;
+                                step_desc.dt                             = stable_settings.desc.dt;
+                                step_desc.viscosity                      = stable_settings.desc.viscosity;
+                                step_desc.diffusion                      = stable_settings.desc.diffusion;
+                                step_desc.diffuse_iterations             = stable_settings.desc.diffuse_iterations;
+                                step_desc.pressure_iterations            = stable_settings.desc.pressure_iterations;
+                                step_desc.density                        = stable_runtime.density;
+                                step_desc.velocity_x                     = stable_runtime.velocity_x;
+                                step_desc.velocity_y                     = stable_runtime.velocity_y;
+                                step_desc.velocity_z                     = stable_runtime.velocity_z;
+                                step_desc.temporary_density              = stable_runtime.temporary_density;
+                                step_desc.temporary_velocity_x           = stable_runtime.temporary_velocity_x;
+                                step_desc.temporary_velocity_y           = stable_runtime.temporary_velocity_y;
+                                step_desc.temporary_velocity_z           = stable_runtime.temporary_velocity_z;
+                                step_desc.temporary_previous_density     = stable_runtime.temporary_previous_density;
+                                step_desc.temporary_previous_velocity_x  = stable_runtime.temporary_previous_velocity_x;
+                                step_desc.temporary_previous_velocity_y  = stable_runtime.temporary_previous_velocity_y;
+                                step_desc.temporary_previous_velocity_z  = stable_runtime.temporary_previous_velocity_z;
+                                step_desc.temporary_pressure             = stable_runtime.temporary_pressure;
+                                step_desc.temporary_divergence           = stable_runtime.temporary_divergence;
+                                step_desc.block_x                        = stable_settings.desc.block_x;
+                                step_desc.block_y                        = stable_settings.desc.block_y;
+                                step_desc.block_z                        = stable_settings.desc.block_z;
+                                step_desc.stream                         = stable_runtime.sim_stream;
+                                stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
                             }
                         } else {
                             if (visual_settings.emit_source) {
@@ -908,12 +994,44 @@ int main() {
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};
-                                smoke_ok(
-                                    visual_simulation_of_smoke_step_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, visual_settings.desc.cell_size, visual_runtime.temporary_previous_density,
-                                        visual_runtime.temporary_previous_temperature, visual_runtime.temporary_previous_velocity_x, visual_runtime.temporary_previous_velocity_y, visual_runtime.temporary_previous_velocity_z, visual_runtime.temporary_pressure, visual_runtime.temporary_divergence, visual_runtime.temporary_omega_x,
-                                        visual_runtime.temporary_omega_y, visual_runtime.temporary_omega_z, visual_runtime.temporary_omega_magnitude, visual_runtime.temporary_force_x, visual_runtime.temporary_force_y, visual_runtime.temporary_force_z, visual_settings.desc.dt, visual_settings.desc.ambient_temperature, visual_settings.desc.density_buoyancy,
-                                        visual_settings.desc.temperature_buoyancy, visual_settings.desc.vorticity_epsilon, visual_settings.desc.pressure_iterations, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_settings.desc.use_monotonic_cubic, visual_runtime.sim_stream),
-                                    "visual_simulation_of_smoke_step_async");
+                                VisualSimulationOfSmokeStepDesc step_desc{};
+                                step_desc.struct_size                    = sizeof(VisualSimulationOfSmokeStepDesc);
+                                step_desc.api_version                    = 1;
+                                step_desc.nx                             = visual_settings.desc.nx;
+                                step_desc.ny                             = visual_settings.desc.ny;
+                                step_desc.nz                             = visual_settings.desc.nz;
+                                step_desc.cell_size                      = visual_settings.desc.cell_size;
+                                step_desc.dt                             = visual_settings.desc.dt;
+                                step_desc.ambient_temperature            = visual_settings.desc.ambient_temperature;
+                                step_desc.density_buoyancy               = visual_settings.desc.density_buoyancy;
+                                step_desc.temperature_buoyancy           = visual_settings.desc.temperature_buoyancy;
+                                step_desc.vorticity_epsilon              = visual_settings.desc.vorticity_epsilon;
+                                step_desc.pressure_iterations            = visual_settings.desc.pressure_iterations;
+                                step_desc.use_monotonic_cubic            = visual_settings.desc.use_monotonic_cubic;
+                                step_desc.density                        = visual_runtime.density;
+                                step_desc.temperature                    = visual_runtime.temperature;
+                                step_desc.velocity_x                     = visual_runtime.velocity_x;
+                                step_desc.velocity_y                     = visual_runtime.velocity_y;
+                                step_desc.velocity_z                     = visual_runtime.velocity_z;
+                                step_desc.temporary_previous_density     = visual_runtime.temporary_previous_density;
+                                step_desc.temporary_previous_temperature = visual_runtime.temporary_previous_temperature;
+                                step_desc.temporary_previous_velocity_x  = visual_runtime.temporary_previous_velocity_x;
+                                step_desc.temporary_previous_velocity_y  = visual_runtime.temporary_previous_velocity_y;
+                                step_desc.temporary_previous_velocity_z  = visual_runtime.temporary_previous_velocity_z;
+                                step_desc.temporary_pressure             = visual_runtime.temporary_pressure;
+                                step_desc.temporary_divergence           = visual_runtime.temporary_divergence;
+                                step_desc.temporary_omega_x              = visual_runtime.temporary_omega_x;
+                                step_desc.temporary_omega_y              = visual_runtime.temporary_omega_y;
+                                step_desc.temporary_omega_z              = visual_runtime.temporary_omega_z;
+                                step_desc.temporary_omega_magnitude      = visual_runtime.temporary_omega_magnitude;
+                                step_desc.temporary_force_x              = visual_runtime.temporary_force_x;
+                                step_desc.temporary_force_y              = visual_runtime.temporary_force_y;
+                                step_desc.temporary_force_z              = visual_runtime.temporary_force_z;
+                                step_desc.block_x                        = visual_settings.desc.block_x;
+                                step_desc.block_y                        = visual_settings.desc.block_y;
+                                step_desc.block_z                        = visual_settings.desc.block_z;
+                                step_desc.stream                         = visual_runtime.sim_stream;
+                                smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
                             }
                         }
 
