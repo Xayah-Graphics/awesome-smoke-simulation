@@ -167,14 +167,14 @@ namespace {
     }
 
     auto stable_ok(const int32_t code, const char* what) {
-        if (code == STABLE_FLUIDS_SUCCESS) {
+        if (code == 0) {
             return;
         }
         throw std::runtime_error(std::string(what) + " failed");
     }
 
     auto smoke_ok(const int32_t code, const char* what) {
-        if (code == VISUAL_SIMULATION_OF_SMOKE_SUCCESS) {
+        if (code == 0) {
             return;
         }
         throw std::runtime_error(std::string(what) + " failed");
