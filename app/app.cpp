@@ -2,6 +2,7 @@ module;
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
+#include <nvtx3/nvtx3.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 module app;
@@ -111,6 +112,7 @@ namespace app {
     }
 
     FrameInfo FieldRendererApp::begin_frame() {
+        nvtx3::scoped_range range{"renderer.begin_frame"};
         glfwPollEvents();
 
         const auto now = std::chrono::steady_clock::now();
@@ -165,6 +167,7 @@ namespace app {
     }
 
     bool FieldRendererApp::render_frame(const std::optional<VolumeFieldView>& field) {
+        nvtx3::scoped_range range{"renderer.render_frame"};
         using namespace vk;
 
         const auto acquire_result = frame::begin_frame(vkctx_, sc_, frames_, frame_index_);
@@ -242,7 +245,7 @@ namespace app {
             push.light_dir = {light_dir.x, light_dir.y, light_dir.z, render_.light_intensity};
             push.lighting_params = {render_.ambient_light, render_.shadow_strength, render_.phase_g, 0.0f};
             push.params0 = {
-                static_cast<float>(sc_.extent.width) / static_cast<float>(std::max(sc_.extent.height, 1u)),
+                static_cast<float>(sc_.extent.width) / static_cast<float>((std::max)(sc_.extent.height, 1u)),
                 half_fov_tan,
                 render_.density_scale,
                 render_.absorption,
@@ -321,7 +324,7 @@ namespace app {
             field.nz * field.cell_size * 0.5f,
             0.0f,
         };
-        camera_state.orbit.distance = std::max({field.nx, field.ny, field.nz}) * field.cell_size * 2.15f;
+        camera_state.orbit.distance = (std::max)({field.nx, field.ny, field.nz}) * field.cell_size * 2.15f;
         camera_state.orbit.yaw_rad = -0.78539816339f;
         camera_state.orbit.pitch_rad = -0.43633231299f;
         camera_.set_state(camera_state);

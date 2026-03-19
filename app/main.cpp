@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 #include <imgui.h>
+#include <nvtx3/nvtx3.hpp>
 #if defined(_WIN32)
 #define NOMINMAX
 #define VK_USE_PLATFORM_WIN32_KHR
@@ -155,6 +156,7 @@ int main() {
         };
 
         auto destroy_backend = [&]() {
+            nvtx3::scoped_range range{"smoke_app.destroy_backend"};
             renderer.vk_context().device.waitIdle();
 
             if (runtime.sim_stream != nullptr) {
@@ -198,6 +200,7 @@ int main() {
         };
 
         auto reset_backend = [&]() {
+            nvtx3::scoped_range range{"smoke_app.reset_backend"};
             const auto timeline_features = renderer.vk_context().physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
             if (!timeline_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) {
                 throw std::runtime_error("002-visual-simulation-of-smoke backend requires Vulkan timeline semaphore support");
@@ -323,24 +326,27 @@ int main() {
                 snapshot_slots.push_back(std::move(slot));
             }
 
-            smoke_ok(visual_simulation_of_smoke_clear_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_clear_async", runtime.context);
-            if (settings.emit_source) {
-                const auto source = make_source();
-                smoke_ok(visual_simulation_of_smoke_add_source_async(runtime.context, &source, runtime.sim_stream), "visual_simulation_of_smoke_add_source_async", runtime.context);
-                smoke_ok(visual_simulation_of_smoke_step_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_step_async", runtime.context);
-            }
+            {
+                nvtx3::scoped_range init_range{"smoke_app.reset_backend.initialize"};
+                smoke_ok(visual_simulation_of_smoke_clear_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_clear_async", runtime.context);
+                if (settings.emit_source) {
+                    const auto source = make_source();
+                    smoke_ok(visual_simulation_of_smoke_add_source_async(runtime.context, &source, runtime.sim_stream), "visual_simulation_of_smoke_add_source_async", runtime.context);
+                    smoke_ok(visual_simulation_of_smoke_step_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_step_async", runtime.context);
+                }
 
-            smoke_ok(visual_simulation_of_smoke_snapshot_density_async(runtime.context, snapshot_slots[0].buffer_view, runtime.sim_stream), "visual_simulation_of_smoke_snapshot_density_async", runtime.context);
-            const uint64_t initial_generation = 1;
-            cudaExternalSemaphoreSignalParams signal_params{};
-            signal_params.params.fence.value = initial_generation;
-            cuda_ok(cudaSignalExternalSemaphoresAsync(&snapshot_slots[0].external_semaphore, &signal_params, 1, runtime.sim_stream), "cudaSignalExternalSemaphoresAsync initial_snapshot");
-            cuda_ok(cudaStreamSynchronize(runtime.sim_stream), "cudaStreamSynchronize initial_snapshot");
-            runtime.snapshot_generation = initial_generation;
-            snapshot_slots[0].ready_generation = initial_generation;
-            runtime.active_snapshot_slot = 0;
-            runtime.active_snapshot_generation = initial_generation;
-            runtime.steps_since_snapshot = 0;
+                smoke_ok(visual_simulation_of_smoke_snapshot_density_async(runtime.context, snapshot_slots[0].buffer_view, runtime.sim_stream), "visual_simulation_of_smoke_snapshot_density_async", runtime.context);
+                const uint64_t initial_generation = 1;
+                cudaExternalSemaphoreSignalParams signal_params{};
+                signal_params.params.fence.value = initial_generation;
+                cuda_ok(cudaSignalExternalSemaphoresAsync(&snapshot_slots[0].external_semaphore, &signal_params, 1, runtime.sim_stream), "cudaSignalExternalSemaphoresAsync initial_snapshot");
+                cuda_ok(cudaStreamSynchronize(runtime.sim_stream), "cudaStreamSynchronize initial_snapshot");
+                runtime.snapshot_generation = initial_generation;
+                snapshot_slots[0].ready_generation = initial_generation;
+                runtime.active_snapshot_slot = 0;
+                runtime.active_snapshot_generation = initial_generation;
+                runtime.steps_since_snapshot = 0;
+            }
 
             if (const auto field = active_snapshot()) {
                 renderer.frame_volume(*field);
@@ -350,6 +356,7 @@ int main() {
         reset_backend();
 
         while (!renderer.should_close()) {
+            nvtx3::scoped_range frame_range{"smoke_app.frame"};
             renderer.begin_frame();
 
             bool reset_requested = false;
@@ -398,13 +405,18 @@ int main() {
             } else {
                 const bool run_simulation = !playback.paused || playback.step_once;
                 if (run_simulation) {
+                    nvtx3::scoped_range sim_range{"smoke_app.simulation"};
                     for (int sim_step = 0; sim_step < playback.sim_steps_per_frame; ++sim_step) {
                         if (settings.emit_source) {
+                            nvtx3::scoped_range source_range{"smoke_app.simulation.add_source"};
                             const auto source = make_source();
                             smoke_ok(visual_simulation_of_smoke_add_source_async(runtime.context, &source, runtime.sim_stream), "visual_simulation_of_smoke_add_source_async", runtime.context);
                         }
 
-                        smoke_ok(visual_simulation_of_smoke_step_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_step_async", runtime.context);
+                        {
+                            nvtx3::scoped_range step_range{"smoke_app.simulation.step"};
+                            smoke_ok(visual_simulation_of_smoke_step_async(runtime.context, runtime.sim_stream), "visual_simulation_of_smoke_step_async", runtime.context);
+                        }
 
                         if (runtime.steps_since_snapshot < static_cast<uint32_t>(playback.snapshot_interval)) {
                             ++runtime.steps_since_snapshot;
@@ -424,6 +436,7 @@ int main() {
                             }
 
                             if (snapshot_slot_index >= 0) {
+                                nvtx3::scoped_range snapshot_range{"smoke_app.simulation.snapshot"};
                                 auto& slot = snapshot_slots[static_cast<size_t>(snapshot_slot_index)];
                                 smoke_ok(visual_simulation_of_smoke_snapshot_density_async(runtime.context, slot.buffer_view, runtime.sim_stream), "visual_simulation_of_smoke_snapshot_density_async", runtime.context);
                                 const uint64_t next_generation = runtime.snapshot_generation + 1;
@@ -447,7 +460,11 @@ int main() {
             const auto field = active_snapshot();
             renderer.draw_renderer_ui(field);
 
-            const bool submitted = renderer.render_frame(field);
+            bool submitted = false;
+            {
+                nvtx3::scoped_range render_range{"smoke_app.render"};
+                submitted = renderer.render_frame(field);
+            }
             if (submitted) {
                 const uint64_t next_submit_serial = runtime.submit_serial + 1;
                 if (runtime.active_snapshot_slot >= 0) {
