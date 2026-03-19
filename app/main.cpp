@@ -32,8 +32,9 @@ namespace {
     };
 
     enum class ExecutionBackend : uint32_t {
-        Cpu  = 0,
-        Cuda = 1,
+        Cpu      = 0,
+        Parallel = 1,
+        Cuda     = 2,
     };
 
     enum class FieldId : uint32_t {
@@ -373,7 +374,7 @@ int main() {
         };
 
         auto current_stream = [&]() -> cudaStream_t {
-            if (execution_backend == ExecutionBackend::Cpu) return nullptr;
+            if (execution_backend != ExecutionBackend::Cuda) return nullptr;
             return backend_kind == BackendKind::StableFluids001 ? stable_runtime.sim_stream : visual_runtime.sim_stream;
         };
 
@@ -1087,6 +1088,7 @@ int main() {
                     step_desc.block_z                        = stable_settings.desc.block_z;
                     step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? stable_runtime.sim_stream : nullptr;
                     if (execution_backend == ExecutionBackend::Cuda) stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
+                    else if (execution_backend == ExecutionBackend::Parallel) stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
                     else stable_ok(stable_fluids_step_cpu(&step_desc), "stable_fluids_step_cpu");
                 }
             } else {
@@ -1153,6 +1155,7 @@ int main() {
                     step_desc.block_z                        = visual_settings.desc.block_z;
                     step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? visual_runtime.sim_stream : nullptr;
                     if (execution_backend == ExecutionBackend::Cuda) smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
+                    else if (execution_backend == ExecutionBackend::Parallel) smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
                     else smoke_ok(visual_simulation_of_smoke_step_cpu(&step_desc), "visual_simulation_of_smoke_step_cpu");
                 }
             }
@@ -1188,9 +1191,10 @@ int main() {
             int execution_backend_index = static_cast<int>(execution_backend);
             const char* execution_backend_labels[] = {
                 "CPU",
+                "Parallel",
                 "CUDA",
             };
-            if (ImGui::Combo("Execution", &execution_backend_index, execution_backend_labels, 2)) reset_requested = true;
+            if (ImGui::Combo("Execution", &execution_backend_index, execution_backend_labels, 3)) reset_requested = true;
             execution_backend = static_cast<ExecutionBackend>(execution_backend_index);
 
             const auto fields    = current_fields();
@@ -1335,6 +1339,7 @@ int main() {
                                 step_desc.block_z                        = stable_settings.desc.block_z;
                                 step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? stable_runtime.sim_stream : nullptr;
                                 if (execution_backend == ExecutionBackend::Cuda) stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
+                                else if (execution_backend == ExecutionBackend::Parallel) stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
                                 else stable_ok(stable_fluids_step_cpu(&step_desc), "stable_fluids_step_cpu");
                             }
                         } else {
@@ -1392,6 +1397,7 @@ int main() {
                                 step_desc.block_z                        = visual_settings.desc.block_z;
                                 step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? visual_runtime.sim_stream : nullptr;
                                 if (execution_backend == ExecutionBackend::Cuda) smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
+                                else if (execution_backend == ExecutionBackend::Parallel) smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
                                 else smoke_ok(visual_simulation_of_smoke_step_cpu(&step_desc), "visual_simulation_of_smoke_step_cpu");
                             }
                         }
