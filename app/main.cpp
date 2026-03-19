@@ -88,32 +88,32 @@ namespace {
     };
 
     struct StableStepConfig {
-        int32_t nx                  = 96;
+        int32_t nx                  = 64;
         int32_t ny                  = 96;
-        int32_t nz                  = 96;
-        float dt                    = 1.0f / 60.0f;
+        int32_t nz                  = 64;
+        float dt                    = 1.0f / 90.0f;
         float cell_size             = 1.0f;
         float viscosity             = 0.00015f;
         float diffusion             = 0.00005f;
         int32_t diffuse_iterations  = 24;
-        int32_t pressure_iterations = 96;
+        int32_t pressure_iterations = 80;
         int32_t block_x             = 8;
         int32_t block_y             = 8;
-        int32_t block_z             = 8;
+        int32_t block_z             = 4;
     };
 
     struct StableSettings {
         StableStepConfig desc{};
         int selected_field = 0;
         bool emit_source   = true;
-        float source_u     = 0.5f;
-        float source_v     = 0.33f;
-        float source_w     = 0.5f;
-        float source_radius = 5.0f;
-        float density_amount = 6.0f;
-        float velocity_x     = 1.25f;
-        float velocity_y     = 2.5f;
-        float velocity_z     = 0.75f;
+        float source_u      = 0.5f;
+        float source_v      = 0.18f;
+        float source_w      = 0.5f;
+        float source_radius  = 5.0f;
+        float density_amount = 0.85f;
+        float velocity_x     = 0.0f;
+        float velocity_y     = 1.2f;
+        float velocity_z     = 0.0f;
     };
 
     struct StableRuntime {
