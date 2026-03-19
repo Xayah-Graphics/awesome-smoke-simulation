@@ -98,7 +98,6 @@ namespace {
             desc.diffusion = 0.00005f;
             desc.diffuse_iterations = 24;
             desc.pressure_iterations = 96;
-            desc.pressure_tolerance = 1.0e-5f;
         }
     };
 
@@ -109,7 +108,7 @@ namespace {
         float* velocity_x = nullptr;
         float* velocity_y = nullptr;
         float* velocity_z = nullptr;
-        StableFluidsFieldSetDesc fields{};
+        StableFluidsFieldSet fields{};
     };
 
     struct VisualSettings {
@@ -207,21 +206,38 @@ int main() {
         ViewerRuntime viewer_runtime{};
         std::vector<SnapshotSlot> snapshot_slots{};
 
-        auto stable_make_buffer_view = [](void* data, const uint64_t size_bytes) {
-            return StableFluidsBufferView{
-                .data = data,
-                .size_bytes = size_bytes,
-                .format = STABLE_FLUIDS_BUFFER_FORMAT_F32,
-                .memory_type = STABLE_FLUIDS_MEMORY_TYPE_CUDA_DEVICE,
+        auto make_field_grid = [](const int32_t nx, const int32_t ny, const int32_t nz, const float cell_size) {
+            return FieldGridDesc{
+                .nx = nx,
+                .ny = ny,
+                .nz = nz,
+                .cell_size = cell_size,
             };
         };
 
-        auto visual_make_buffer_view = [](void* data, const uint64_t size_bytes) {
-            return VisualSimulationOfSmokeBufferView{
+        auto make_buffer_view = [](void* data, const uint64_t size_bytes) {
+            return FieldBufferView{
                 .data = data,
                 .size_bytes = size_bytes,
-                .format = VISUAL_SIMULATION_OF_SMOKE_BUFFER_FORMAT_F32,
-                .memory_type = VISUAL_SIMULATION_OF_SMOKE_MEMORY_TYPE_CUDA_DEVICE,
+                .format = FIELD_FORMAT_F32,
+                .memory_type = FIELD_MEMORY_TYPE_CUDA_DEVICE,
+            };
+        };
+
+        auto make_scalar_field = [&](const FieldGridDesc& grid, void* data, const uint64_t size_bytes) {
+            return ScalarField{
+                .grid = grid,
+                .values = make_buffer_view(data, size_bytes),
+            };
+        };
+
+        auto make_cell_centered_vector_field = [&](const FieldGridDesc& grid, void* x, const uint64_t x_bytes, void* y, const uint64_t y_bytes, void* z, const uint64_t z_bytes) {
+            return VectorField{
+                .grid = grid,
+                .layout = VECTOR_FIELD_LAYOUT_CELL_CENTERED,
+                .x = make_buffer_view(x, x_bytes),
+                .y = make_buffer_view(y, y_bytes),
+                .z = make_buffer_view(z, z_bytes),
             };
         };
 
@@ -555,22 +571,25 @@ int main() {
             nvtx3::scoped_range range{tag};
             auto& slot = snapshot_slots.at(static_cast<size_t>(slot_index));
             const auto& field = current_field();
+            const auto grid = current_grid();
+            const ScalarField destination = make_scalar_field(
+                make_field_grid(static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), grid.cell_size),
+                slot.cuda_ptr,
+                viewer_runtime.field_bytes);
 
             if (backend_kind == BackendKind::StableFluids001) {
-                const auto destination = stable_make_buffer_view(slot.cuda_ptr, viewer_runtime.field_bytes);
                 if (field.id == FieldId::Density) {
-                    stable_ok(stable_fluids_fields_snapshot_density_async(stable_runtime.context, &stable_runtime.fields, destination, stable_runtime.sim_stream), "stable_fluids_fields_snapshot_density_async", stable_runtime.context);
+                    stable_ok(stable_fluids_fields_snapshot_density_async(stable_runtime.context, &stable_runtime.fields, &destination, stable_runtime.sim_stream), "stable_fluids_fields_snapshot_density_async", stable_runtime.context);
                 } else {
-                    stable_ok(stable_fluids_fields_snapshot_velocity_magnitude_async(stable_runtime.context, &stable_runtime.fields, destination, stable_runtime.sim_stream), "stable_fluids_fields_snapshot_velocity_magnitude_async", stable_runtime.context);
+                    stable_ok(stable_fluids_fields_snapshot_velocity_magnitude_async(stable_runtime.context, &stable_runtime.fields, &destination, stable_runtime.sim_stream), "stable_fluids_fields_snapshot_velocity_magnitude_async", stable_runtime.context);
                 }
             } else {
-                const auto destination = visual_make_buffer_view(slot.cuda_ptr, viewer_runtime.field_bytes);
                 if (field.id == FieldId::Density) {
-                    smoke_ok(visual_simulation_of_smoke_snapshot_density_async(visual_runtime.context, destination, visual_runtime.sim_stream), "visual_simulation_of_smoke_snapshot_density_async", visual_runtime.context);
+                    smoke_ok(visual_simulation_of_smoke_snapshot_density_async(visual_runtime.context, &destination, visual_runtime.sim_stream), "visual_simulation_of_smoke_snapshot_density_async", visual_runtime.context);
                 } else if (field.id == FieldId::Temperature) {
-                    smoke_ok(visual_simulation_of_smoke_snapshot_temperature_async(visual_runtime.context, destination, visual_runtime.sim_stream), "visual_simulation_of_smoke_snapshot_temperature_async", visual_runtime.context);
+                    smoke_ok(visual_simulation_of_smoke_snapshot_temperature_async(visual_runtime.context, &destination, visual_runtime.sim_stream), "visual_simulation_of_smoke_snapshot_temperature_async", visual_runtime.context);
                 } else {
-                    smoke_ok(visual_simulation_of_smoke_snapshot_velocity_magnitude_async(visual_runtime.context, destination, visual_runtime.sim_stream), "visual_simulation_of_smoke_snapshot_velocity_magnitude_async", visual_runtime.context);
+                    smoke_ok(visual_simulation_of_smoke_snapshot_velocity_magnitude_async(visual_runtime.context, &destination, visual_runtime.sim_stream), "visual_simulation_of_smoke_snapshot_velocity_magnitude_async", visual_runtime.context);
                 }
             }
 
@@ -610,16 +629,18 @@ int main() {
                 }
 
                 viewer_runtime.field_bytes = stable_fluids_context_required_scalar_field_bytes(stable_runtime.context);
+                const uint64_t velocity_x_bytes = stable_fluids_context_required_vector_field_component_bytes(stable_runtime.context, VECTOR_FIELD_COMPONENT_X);
+                const uint64_t velocity_y_bytes = stable_fluids_context_required_vector_field_component_bytes(stable_runtime.context, VECTOR_FIELD_COMPONENT_Y);
+                const uint64_t velocity_z_bytes = stable_fluids_context_required_vector_field_component_bytes(stable_runtime.context, VECTOR_FIELD_COMPONENT_Z);
+                const FieldGridDesc grid = make_field_grid(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, stable_settings.desc.cell_size);
                 cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), viewer_runtime.field_bytes), "cudaMalloc stable density");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), viewer_runtime.field_bytes), "cudaMalloc stable velocity_x");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), viewer_runtime.field_bytes), "cudaMalloc stable velocity_y");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), viewer_runtime.field_bytes), "cudaMalloc stable velocity_z");
-                stable_runtime.fields = StableFluidsFieldSetDesc{
-                    .density = stable_make_buffer_view(stable_runtime.density, viewer_runtime.field_bytes),
-                    .velocity_x = stable_make_buffer_view(stable_runtime.velocity_x, viewer_runtime.field_bytes),
-                    .velocity_y = stable_make_buffer_view(stable_runtime.velocity_y, viewer_runtime.field_bytes),
-                    .velocity_z = stable_make_buffer_view(stable_runtime.velocity_z, viewer_runtime.field_bytes),
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), velocity_x_bytes), "cudaMalloc stable velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), velocity_y_bytes), "cudaMalloc stable velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), velocity_z_bytes), "cudaMalloc stable velocity_z");
+                stable_runtime.fields = StableFluidsFieldSet{
+                    .density = make_scalar_field(grid, stable_runtime.density, viewer_runtime.field_bytes),
+                    .velocity = make_cell_centered_vector_field(grid, stable_runtime.velocity_x, velocity_x_bytes, stable_runtime.velocity_y, velocity_y_bytes, stable_runtime.velocity_z, velocity_z_bytes),
                 };
             } else {
                 visual_runtime.context = visual_simulation_of_smoke_context_create(&visual_settings.desc);
@@ -627,7 +648,7 @@ int main() {
                     smoke_ok(VISUAL_SIMULATION_OF_SMOKE_ERROR_RUNTIME, "visual_simulation_of_smoke_context_create");
                 }
 
-                viewer_runtime.field_bytes = visual_simulation_of_smoke_context_required_density_bytes(visual_runtime.context);
+                viewer_runtime.field_bytes = visual_simulation_of_smoke_context_required_scalar_field_bytes(visual_runtime.context);
                 cuda_ok(cudaStreamCreateWithFlags(&visual_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags visual_stream");
             }
 
