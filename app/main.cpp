@@ -61,6 +61,11 @@ namespace {
         FieldChoice{FieldId::VelocityMagnitude, "Velocity Magnitude", app::FieldSemantic::VelocityMagnitude},
     };
 
+    constexpr std::array stable_boundary_labels{
+        "Fixed",
+        "Periodic",
+    };
+
     constexpr std::array visual_fields{
         FieldChoice{FieldId::Density, "Density", app::FieldSemantic::Density},
         FieldChoice{FieldId::Temperature, "Temperature", app::FieldSemantic::Temperature},
@@ -97,6 +102,12 @@ namespace {
         float diffusion             = 0.00005f;
         int32_t diffuse_iterations  = 24;
         int32_t pressure_iterations = 80;
+        uint32_t boundary_x_min     = STABLE_FLUIDS_BOUNDARY_FIXED;
+        uint32_t boundary_x_max     = STABLE_FLUIDS_BOUNDARY_FIXED;
+        uint32_t boundary_y_min     = STABLE_FLUIDS_BOUNDARY_FIXED;
+        uint32_t boundary_y_max     = STABLE_FLUIDS_BOUNDARY_FIXED;
+        uint32_t boundary_z_min     = STABLE_FLUIDS_BOUNDARY_FIXED;
+        uint32_t boundary_z_max     = STABLE_FLUIDS_BOUNDARY_FIXED;
         int32_t block_x             = 8;
         int32_t block_y             = 8;
         int32_t block_z             = 4;
@@ -1069,6 +1080,12 @@ int main() {
                     step_desc.diffusion                      = stable_settings.desc.diffusion;
                     step_desc.diffuse_iterations             = stable_settings.desc.diffuse_iterations;
                     step_desc.pressure_iterations            = stable_settings.desc.pressure_iterations;
+                    step_desc.boundary_x_min                 = stable_settings.desc.boundary_x_min;
+                    step_desc.boundary_x_max                 = stable_settings.desc.boundary_x_max;
+                    step_desc.boundary_y_min                 = stable_settings.desc.boundary_y_min;
+                    step_desc.boundary_y_max                 = stable_settings.desc.boundary_y_max;
+                    step_desc.boundary_z_min                 = stable_settings.desc.boundary_z_min;
+                    step_desc.boundary_z_max                 = stable_settings.desc.boundary_z_max;
                     step_desc.density                        = stable_runtime.density;
                     step_desc.velocity_x                     = stable_runtime.velocity_x;
                     step_desc.velocity_y                     = stable_runtime.velocity_y;
@@ -1239,6 +1256,29 @@ int main() {
                 if (ImGui::SliderFloat("Diffusion", &stable_settings.desc.diffusion, 0.0f, 0.002f, "%.5f")) reset_requested = true;
                 if (ImGui::SliderInt("Diffuse Iterations", &stable_settings.desc.diffuse_iterations, 1, 64)) reset_requested = true;
                 if (ImGui::SliderInt("Pressure Iterations", &stable_settings.desc.pressure_iterations, 4, 192)) reset_requested = true;
+                auto draw_boundary_combo = [&](const char* label, uint32_t& value) {
+                    int boundary = std::clamp(static_cast<int>(value), 0, static_cast<int>(stable_boundary_labels.size()) - 1);
+                    if (ImGui::BeginCombo(label, stable_boundary_labels[static_cast<size_t>(boundary)])) {
+                        for (int i = 0; i < static_cast<int>(stable_boundary_labels.size()); ++i) {
+                            const bool is_selected = boundary == i;
+                            if (ImGui::Selectable(stable_boundary_labels[static_cast<size_t>(i)], is_selected)) {
+                                boundary = i;
+                                value    = static_cast<uint32_t>(i);
+                                reset_requested = true;
+                            }
+                            if (is_selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                };
+                ImGui::Separator();
+                ImGui::TextUnformatted("Boundary Conditions");
+                draw_boundary_combo("Boundary X-", stable_settings.desc.boundary_x_min);
+                draw_boundary_combo("Boundary X+", stable_settings.desc.boundary_x_max);
+                draw_boundary_combo("Boundary Y-", stable_settings.desc.boundary_y_min);
+                draw_boundary_combo("Boundary Y+", stable_settings.desc.boundary_y_max);
+                draw_boundary_combo("Boundary Z-", stable_settings.desc.boundary_z_min);
+                draw_boundary_combo("Boundary Z+", stable_settings.desc.boundary_z_max);
                 ImGui::Separator();
                 ImGui::Checkbox("Emit Source", &stable_settings.emit_source);
                 ImGui::SliderFloat("Source U", &stable_settings.source_u, 0.0f, 1.0f, "%.2f");
@@ -1322,6 +1362,12 @@ int main() {
                                 step_desc.diffusion                      = stable_settings.desc.diffusion;
                                 step_desc.diffuse_iterations             = stable_settings.desc.diffuse_iterations;
                                 step_desc.pressure_iterations            = stable_settings.desc.pressure_iterations;
+                                step_desc.boundary_x_min                 = stable_settings.desc.boundary_x_min;
+                                step_desc.boundary_x_max                 = stable_settings.desc.boundary_x_max;
+                                step_desc.boundary_y_min                 = stable_settings.desc.boundary_y_min;
+                                step_desc.boundary_y_max                 = stable_settings.desc.boundary_y_max;
+                                step_desc.boundary_z_min                 = stable_settings.desc.boundary_z_min;
+                                step_desc.boundary_z_max                 = stable_settings.desc.boundary_z_max;
                                 step_desc.density                        = stable_runtime.density;
                                 step_desc.velocity_x                     = stable_runtime.velocity_x;
                                 step_desc.velocity_y                     = stable_runtime.velocity_y;
