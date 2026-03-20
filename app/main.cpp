@@ -32,9 +32,8 @@ namespace {
     };
 
     enum class ExecutionBackend : uint32_t {
-        Cpu      = 0,
-        Parallel = 1,
-        Cuda     = 2,
+        Parallel = 0,
+        Cuda     = 1,
     };
 
     enum class FieldId : uint32_t {
@@ -128,6 +127,7 @@ namespace {
     };
 
     struct StableRuntime {
+        bool device_allocated                = false;
         cudaStream_t sim_stream              = nullptr;
         float* density                       = nullptr;
         float* velocity_x                    = nullptr;
@@ -192,6 +192,7 @@ namespace {
     };
 
     struct VisualRuntime {
+        bool device_allocated               = false;
         cudaStream_t sim_stream               = nullptr;
         float* density                        = nullptr;
         float* temperature                    = nullptr;
@@ -278,8 +279,8 @@ int main() {
         auto velocity_y_elements = [&](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<size_t>(velocity_y_bytes(nx, ny, nz) / sizeof(float)); };
         auto velocity_z_elements = [&](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<size_t>(velocity_z_bytes(nx, ny, nz) / sizeof(float)); };
 
-        auto add_stable_source_cpu = [&](float* density, float* velocity_x, float* velocity_y, float* velocity_z, const int32_t nx, const int32_t ny, const int32_t nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float velocity_source_x,
-                                         const float velocity_source_y, const float velocity_source_z) {
+        auto add_stable_source_host = [&](float* density, float* velocity_x, float* velocity_y, float* velocity_z, const int32_t nx, const int32_t ny, const int32_t nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float velocity_source_x,
+                                          const float velocity_source_y, const float velocity_source_z) {
             const float radius2 = radius * radius;
             auto stable_index = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
             for (int z = 0; z < nz; ++z)
@@ -324,8 +325,8 @@ int main() {
                     }
         };
 
-        auto add_visual_source_cpu = [&](float* density, float* temperature, float* velocity_x, float* velocity_y, float* velocity_z, const int32_t nx, const int32_t ny, const int32_t nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float temperature_amount,
-                                         const float velocity_source_x, const float velocity_source_y, const float velocity_source_z) {
+        auto add_visual_source_host = [&](float* density, float* temperature, float* velocity_x, float* velocity_y, float* velocity_z, const int32_t nx, const int32_t ny, const int32_t nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float temperature_amount,
+                                          const float velocity_source_x, const float velocity_source_y, const float velocity_source_z) {
             const float radius2 = radius * radius;
             auto visual_index = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
             for (int z = 0; z < nz; ++z)
@@ -493,66 +494,29 @@ int main() {
             if (stable_runtime.sim_stream != nullptr) {
                 cudaStreamSynchronize(stable_runtime.sim_stream);
             }
-            if (stable_runtime.density != nullptr) {
-                cudaFree(stable_runtime.density);
-                stable_runtime.density = nullptr;
-            }
-            if (stable_runtime.velocity_x != nullptr) {
-                cudaFree(stable_runtime.velocity_x);
-                stable_runtime.velocity_x = nullptr;
-            }
-            if (stable_runtime.velocity_y != nullptr) {
-                cudaFree(stable_runtime.velocity_y);
-                stable_runtime.velocity_y = nullptr;
-            }
-            if (stable_runtime.velocity_z != nullptr) {
-                cudaFree(stable_runtime.velocity_z);
-                stable_runtime.velocity_z = nullptr;
-            }
-            if (stable_runtime.temporary_density != nullptr) {
-                cudaFree(stable_runtime.temporary_density);
-                stable_runtime.temporary_density = nullptr;
-            }
-            if (stable_runtime.temporary_velocity_x != nullptr) {
-                cudaFree(stable_runtime.temporary_velocity_x);
-                stable_runtime.temporary_velocity_x = nullptr;
-            }
-            if (stable_runtime.temporary_velocity_y != nullptr) {
-                cudaFree(stable_runtime.temporary_velocity_y);
-                stable_runtime.temporary_velocity_y = nullptr;
-            }
-            if (stable_runtime.temporary_velocity_z != nullptr) {
-                cudaFree(stable_runtime.temporary_velocity_z);
-                stable_runtime.temporary_velocity_z = nullptr;
-            }
-            if (stable_runtime.temporary_previous_density != nullptr) {
-                cudaFree(stable_runtime.temporary_previous_density);
-                stable_runtime.temporary_previous_density = nullptr;
-            }
-            if (stable_runtime.temporary_previous_velocity_x != nullptr) {
-                cudaFree(stable_runtime.temporary_previous_velocity_x);
-                stable_runtime.temporary_previous_velocity_x = nullptr;
-            }
-            if (stable_runtime.temporary_previous_velocity_y != nullptr) {
-                cudaFree(stable_runtime.temporary_previous_velocity_y);
-                stable_runtime.temporary_previous_velocity_y = nullptr;
-            }
-            if (stable_runtime.temporary_previous_velocity_z != nullptr) {
-                cudaFree(stable_runtime.temporary_previous_velocity_z);
-                stable_runtime.temporary_previous_velocity_z = nullptr;
-            }
-            if (stable_runtime.temporary_pressure != nullptr) {
-                cudaFree(stable_runtime.temporary_pressure);
-                stable_runtime.temporary_pressure = nullptr;
-            }
-            if (stable_runtime.temporary_divergence != nullptr) {
-                cudaFree(stable_runtime.temporary_divergence);
-                stable_runtime.temporary_divergence = nullptr;
-            }
+            auto release = [&](float*& ptr) {
+                if (stable_runtime.device_allocated && ptr != nullptr) cudaFree(ptr);
+                ptr = nullptr;
+            };
+            release(stable_runtime.density);
+            release(stable_runtime.velocity_x);
+            release(stable_runtime.velocity_y);
+            release(stable_runtime.velocity_z);
+            release(stable_runtime.temporary_density);
+            release(stable_runtime.temporary_velocity_x);
+            release(stable_runtime.temporary_velocity_y);
+            release(stable_runtime.temporary_velocity_z);
+            release(stable_runtime.temporary_previous_density);
+            release(stable_runtime.temporary_previous_velocity_x);
+            release(stable_runtime.temporary_previous_velocity_y);
+            release(stable_runtime.temporary_previous_velocity_z);
+            release(stable_runtime.temporary_pressure);
+            release(stable_runtime.temporary_divergence);
             if (stable_runtime.sim_stream != nullptr) {
                 cudaStreamDestroy(stable_runtime.sim_stream);
                 stable_runtime.sim_stream = nullptr;
             }
+            stable_runtime.device_allocated = false;
             stable_runtime.host_density.clear();
             stable_runtime.host_velocity_x.clear();
             stable_runtime.host_velocity_y.clear();
@@ -587,86 +551,34 @@ int main() {
             if (visual_runtime.sim_stream != nullptr) {
                 cudaStreamSynchronize(visual_runtime.sim_stream);
             }
-            if (visual_runtime.density != nullptr) {
-                cudaFree(visual_runtime.density);
-                visual_runtime.density = nullptr;
-            }
-            if (visual_runtime.temperature != nullptr) {
-                cudaFree(visual_runtime.temperature);
-                visual_runtime.temperature = nullptr;
-            }
-            if (visual_runtime.velocity_x != nullptr) {
-                cudaFree(visual_runtime.velocity_x);
-                visual_runtime.velocity_x = nullptr;
-            }
-            if (visual_runtime.velocity_y != nullptr) {
-                cudaFree(visual_runtime.velocity_y);
-                visual_runtime.velocity_y = nullptr;
-            }
-            if (visual_runtime.velocity_z != nullptr) {
-                cudaFree(visual_runtime.velocity_z);
-                visual_runtime.velocity_z = nullptr;
-            }
-            if (visual_runtime.temporary_previous_density != nullptr) {
-                cudaFree(visual_runtime.temporary_previous_density);
-                visual_runtime.temporary_previous_density = nullptr;
-            }
-            if (visual_runtime.temporary_previous_temperature != nullptr) {
-                cudaFree(visual_runtime.temporary_previous_temperature);
-                visual_runtime.temporary_previous_temperature = nullptr;
-            }
-            if (visual_runtime.temporary_previous_velocity_x != nullptr) {
-                cudaFree(visual_runtime.temporary_previous_velocity_x);
-                visual_runtime.temporary_previous_velocity_x = nullptr;
-            }
-            if (visual_runtime.temporary_previous_velocity_y != nullptr) {
-                cudaFree(visual_runtime.temporary_previous_velocity_y);
-                visual_runtime.temporary_previous_velocity_y = nullptr;
-            }
-            if (visual_runtime.temporary_previous_velocity_z != nullptr) {
-                cudaFree(visual_runtime.temporary_previous_velocity_z);
-                visual_runtime.temporary_previous_velocity_z = nullptr;
-            }
-            if (visual_runtime.temporary_pressure != nullptr) {
-                cudaFree(visual_runtime.temporary_pressure);
-                visual_runtime.temporary_pressure = nullptr;
-            }
-            if (visual_runtime.temporary_divergence != nullptr) {
-                cudaFree(visual_runtime.temporary_divergence);
-                visual_runtime.temporary_divergence = nullptr;
-            }
-            if (visual_runtime.temporary_omega_x != nullptr) {
-                cudaFree(visual_runtime.temporary_omega_x);
-                visual_runtime.temporary_omega_x = nullptr;
-            }
-            if (visual_runtime.temporary_omega_y != nullptr) {
-                cudaFree(visual_runtime.temporary_omega_y);
-                visual_runtime.temporary_omega_y = nullptr;
-            }
-            if (visual_runtime.temporary_omega_z != nullptr) {
-                cudaFree(visual_runtime.temporary_omega_z);
-                visual_runtime.temporary_omega_z = nullptr;
-            }
-            if (visual_runtime.temporary_omega_magnitude != nullptr) {
-                cudaFree(visual_runtime.temporary_omega_magnitude);
-                visual_runtime.temporary_omega_magnitude = nullptr;
-            }
-            if (visual_runtime.temporary_force_x != nullptr) {
-                cudaFree(visual_runtime.temporary_force_x);
-                visual_runtime.temporary_force_x = nullptr;
-            }
-            if (visual_runtime.temporary_force_y != nullptr) {
-                cudaFree(visual_runtime.temporary_force_y);
-                visual_runtime.temporary_force_y = nullptr;
-            }
-            if (visual_runtime.temporary_force_z != nullptr) {
-                cudaFree(visual_runtime.temporary_force_z);
-                visual_runtime.temporary_force_z = nullptr;
-            }
+            auto release = [&](float*& ptr) {
+                if (visual_runtime.device_allocated && ptr != nullptr) cudaFree(ptr);
+                ptr = nullptr;
+            };
+            release(visual_runtime.density);
+            release(visual_runtime.temperature);
+            release(visual_runtime.velocity_x);
+            release(visual_runtime.velocity_y);
+            release(visual_runtime.velocity_z);
+            release(visual_runtime.temporary_previous_density);
+            release(visual_runtime.temporary_previous_temperature);
+            release(visual_runtime.temporary_previous_velocity_x);
+            release(visual_runtime.temporary_previous_velocity_y);
+            release(visual_runtime.temporary_previous_velocity_z);
+            release(visual_runtime.temporary_pressure);
+            release(visual_runtime.temporary_divergence);
+            release(visual_runtime.temporary_omega_x);
+            release(visual_runtime.temporary_omega_y);
+            release(visual_runtime.temporary_omega_z);
+            release(visual_runtime.temporary_omega_magnitude);
+            release(visual_runtime.temporary_force_x);
+            release(visual_runtime.temporary_force_y);
+            release(visual_runtime.temporary_force_z);
             if (visual_runtime.sim_stream != nullptr) {
                 cudaStreamDestroy(visual_runtime.sim_stream);
                 visual_runtime.sim_stream = nullptr;
             }
+            visual_runtime.device_allocated = false;
             visual_runtime.host_density.clear();
             visual_runtime.host_temperature.clear();
             visual_runtime.host_velocity_x.clear();
@@ -848,7 +760,7 @@ int main() {
                     }
                 } else {
                     if (field.id == FieldId::Density) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync stable density cpu snapshot");
+                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync stable density host snapshot");
                     } else {
                         auto stable_index = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
                         for (uint32_t z = 0; z < grid.nz; ++z)
@@ -859,7 +771,7 @@ int main() {
                                     const float vz = 0.5f * (stable_runtime.velocity_z[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))] + stable_runtime.velocity_z[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z) + 1, static_cast<int>(grid.nx), static_cast<int>(grid.ny))]);
                                     stable_runtime.temporary_density[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))] = std::sqrt(vx * vx + vy * vy + vz * vz);
                                 }
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.temporary_density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync stable velocity magnitude cpu snapshot");
+                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.temporary_density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync stable velocity magnitude host snapshot");
                     }
                 }
             } else {
@@ -876,9 +788,9 @@ int main() {
                 } else {
                     auto visual_index = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
                     if (field.id == FieldId::Density) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual density cpu snapshot");
+                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual density host snapshot");
                     } else if (field.id == FieldId::Temperature) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temperature, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual temperature cpu snapshot");
+                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temperature, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual temperature host snapshot");
                     } else {
                         for (uint32_t z = 0; z < grid.nz; ++z)
                             for (uint32_t y = 0; y < grid.ny; ++y)
@@ -888,7 +800,7 @@ int main() {
                                     const float vz = 0.5f * (visual_runtime.velocity_z[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))] + visual_runtime.velocity_z[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z) + 1, static_cast<int>(grid.nx), static_cast<int>(grid.ny))]);
                                     visual_runtime.temporary_pressure[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))] = std::sqrt(vx * vx + vy * vy + vz * vz);
                                 }
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temporary_pressure, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual velocity magnitude cpu snapshot");
+                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temporary_pressure, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual velocity magnitude host snapshot");
                     }
                 }
             }
@@ -928,6 +840,7 @@ int main() {
                 const auto stable_velocity_y_bytes = velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 const auto stable_velocity_z_bytes = velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 if (execution_backend == ExecutionBackend::Cuda) {
+                    stable_runtime.device_allocated = true;
                     cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
                     cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), viewer_runtime.field_bytes), "cudaMalloc stable density");
                     cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), stable_velocity_x_bytes), "cudaMalloc stable velocity_x");
@@ -944,6 +857,7 @@ int main() {
                     cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc stable temporary_pressure");
                     cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc stable temporary_divergence");
                 } else {
+                    stable_runtime.device_allocated = false;
                     stable_runtime.host_density.resize(scalar_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
                     stable_runtime.host_velocity_x.resize(velocity_x_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
                     stable_runtime.host_velocity_y.resize(velocity_y_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
@@ -979,6 +893,7 @@ int main() {
                 const auto visual_velocity_y_bytes = velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_z_bytes = velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 if (execution_backend == ExecutionBackend::Cuda) {
+                    visual_runtime.device_allocated = true;
                     cuda_ok(cudaStreamCreateWithFlags(&visual_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags visual_stream");
                     cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.density), viewer_runtime.field_bytes), "cudaMalloc visual density");
                     cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temperature), viewer_runtime.field_bytes), "cudaMalloc visual temperature");
@@ -1000,6 +915,7 @@ int main() {
                     cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_y), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_y");
                     cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_z), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_z");
                 } else {
+                    visual_runtime.device_allocated = false;
                     visual_runtime.host_density.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
                     visual_runtime.host_temperature.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
                     visual_runtime.host_velocity_x.resize(velocity_x_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
@@ -1065,7 +981,7 @@ int main() {
                                       stable_runtime.sim_stream),
                             "app_add_stable_source_async");
                     } else {
-                        add_stable_source_cpu(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.velocity_x,
+                        add_stable_source_host(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.velocity_x,
                             stable_settings.velocity_y, stable_settings.velocity_z);
                     }
                     StableFluidsStepDesc step_desc{};
@@ -1106,8 +1022,7 @@ int main() {
                     step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? stable_runtime.sim_stream : nullptr;
                     stable_ok(stable_fluids_validate_desc(&step_desc), "stable_fluids_validate_desc");
                     if (execution_backend == ExecutionBackend::Cuda) stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
-                    else if (execution_backend == ExecutionBackend::Parallel) stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
-                    else stable_ok(stable_fluids_step_cpu(&step_desc), "stable_fluids_step_cpu");
+                    else stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
                 }
             } else {
                 if (execution_backend == ExecutionBackend::Cuda) {
@@ -1132,7 +1047,7 @@ int main() {
                                      visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
                             "app_add_visual_source_async");
                     } else {
-                        add_visual_source_cpu(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius, visual_settings.density_amount,
+                        add_visual_source_host(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius, visual_settings.density_amount,
                             visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z);
                     }
                     VisualSimulationOfSmokeStepDesc step_desc{};
@@ -1174,8 +1089,7 @@ int main() {
                     step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? visual_runtime.sim_stream : nullptr;
                     smoke_ok(visual_simulation_of_smoke_validate_desc(&step_desc), "visual_simulation_of_smoke_validate_desc");
                     if (execution_backend == ExecutionBackend::Cuda) smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
-                    else if (execution_backend == ExecutionBackend::Parallel) smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
-                    else smoke_ok(visual_simulation_of_smoke_step_cpu(&step_desc), "visual_simulation_of_smoke_step_cpu");
+                    else smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
                 }
             }
 
@@ -1209,11 +1123,10 @@ int main() {
             }
             int execution_backend_index = static_cast<int>(execution_backend);
             const char* execution_backend_labels[] = {
-                "CPU",
                 "Parallel",
                 "CUDA",
             };
-            if (ImGui::Combo("Execution", &execution_backend_index, execution_backend_labels, 3)) reset_requested = true;
+            if (ImGui::Combo("Execution", &execution_backend_index, execution_backend_labels, 2)) reset_requested = true;
             execution_backend = static_cast<ExecutionBackend>(execution_backend_index);
 
             const auto fields    = current_fields();
@@ -1344,7 +1257,7 @@ int main() {
                                                   stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
                                         "app_add_stable_source_async");
                                 } else {
-                                    add_stable_source_cpu(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
+                                    add_stable_source_host(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
                                         stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z);
                                 }
                             }
@@ -1388,8 +1301,7 @@ int main() {
                                 step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? stable_runtime.sim_stream : nullptr;
                                 stable_ok(stable_fluids_validate_desc(&step_desc), "stable_fluids_validate_desc");
                                 if (execution_backend == ExecutionBackend::Cuda) stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
-                                else if (execution_backend == ExecutionBackend::Parallel) stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
-                                else stable_ok(stable_fluids_step_cpu(&step_desc), "stable_fluids_step_cpu");
+                                else stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
                             }
                         } else {
                             if (visual_settings.emit_source) {
@@ -1402,7 +1314,7 @@ int main() {
                                                  visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
                                         "app_add_visual_source_async");
                                 } else {
-                                    add_visual_source_cpu(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
+                                    add_visual_source_host(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
                                         visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z);
                                 }
                             }
@@ -1447,8 +1359,7 @@ int main() {
                                 step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? visual_runtime.sim_stream : nullptr;
                                 smoke_ok(visual_simulation_of_smoke_validate_desc(&step_desc), "visual_simulation_of_smoke_validate_desc");
                                 if (execution_backend == ExecutionBackend::Cuda) smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
-                                else if (execution_backend == ExecutionBackend::Parallel) smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
-                                else smoke_ok(visual_simulation_of_smoke_step_cpu(&step_desc), "visual_simulation_of_smoke_step_cpu");
+                                else smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
                             }
                         }
 
