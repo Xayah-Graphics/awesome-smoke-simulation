@@ -1087,6 +1087,7 @@ int main() {
                     step_desc.block_y                        = stable_settings.desc.block_y;
                     step_desc.block_z                        = stable_settings.desc.block_z;
                     step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? stable_runtime.sim_stream : nullptr;
+                    stable_ok(stable_fluids_validate_desc(&step_desc), "stable_fluids_validate_desc");
                     if (execution_backend == ExecutionBackend::Cuda) stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
                     else if (execution_backend == ExecutionBackend::Parallel) stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
                     else stable_ok(stable_fluids_step_cpu(&step_desc), "stable_fluids_step_cpu");
@@ -1154,6 +1155,7 @@ int main() {
                     step_desc.block_y                        = visual_settings.desc.block_y;
                     step_desc.block_z                        = visual_settings.desc.block_z;
                     step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? visual_runtime.sim_stream : nullptr;
+                    smoke_ok(visual_simulation_of_smoke_validate_desc(&step_desc), "visual_simulation_of_smoke_validate_desc");
                     if (execution_backend == ExecutionBackend::Cuda) smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
                     else if (execution_backend == ExecutionBackend::Parallel) smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
                     else smoke_ok(visual_simulation_of_smoke_step_cpu(&step_desc), "visual_simulation_of_smoke_step_cpu");
@@ -1338,6 +1340,7 @@ int main() {
                                 step_desc.block_y                        = stable_settings.desc.block_y;
                                 step_desc.block_z                        = stable_settings.desc.block_z;
                                 step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? stable_runtime.sim_stream : nullptr;
+                                stable_ok(stable_fluids_validate_desc(&step_desc), "stable_fluids_validate_desc");
                                 if (execution_backend == ExecutionBackend::Cuda) stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
                                 else if (execution_backend == ExecutionBackend::Parallel) stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
                                 else stable_ok(stable_fluids_step_cpu(&step_desc), "stable_fluids_step_cpu");
@@ -1396,6 +1399,7 @@ int main() {
                                 step_desc.block_y                        = visual_settings.desc.block_y;
                                 step_desc.block_z                        = visual_settings.desc.block_z;
                                 step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? visual_runtime.sim_stream : nullptr;
+                                smoke_ok(visual_simulation_of_smoke_validate_desc(&step_desc), "visual_simulation_of_smoke_validate_desc");
                                 if (execution_backend == ExecutionBackend::Cuda) smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
                                 else if (execution_backend == ExecutionBackend::Parallel) smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
                                 else smoke_ok(visual_simulation_of_smoke_step_cpu(&step_desc), "visual_simulation_of_smoke_step_cpu");
