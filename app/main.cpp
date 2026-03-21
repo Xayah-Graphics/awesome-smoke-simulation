@@ -79,6 +79,15 @@ namespace {
         int active_snapshot_slot      = -1;
     };
 
+    struct SolverStats {
+        double last_step_call_ms     = 0.0;
+        double average_step_call_ms  = 0.0;
+        double last_snapshot_ms      = 0.0;
+        double average_snapshot_ms   = 0.0;
+        uint64_t step_count          = 0;
+        uint64_t snapshot_count      = 0;
+    };
+
     struct SnapshotSlot {
         vk::raii::Buffer buffer{nullptr};
         vk::raii::DeviceMemory memory{nullptr};
@@ -265,8 +274,10 @@ int main() {
         ExecutionBackend execution_backend = ExecutionBackend::Cuda;
         StableSettings stable_settings{};
         StableRuntime stable_runtime{};
+        SolverStats stable_solver_stats{};
         VisualSettings visual_settings{};
         VisualRuntime visual_runtime{};
+        SolverStats visual_solver_stats{};
         ViewerRuntime viewer_runtime{};
         std::vector<SnapshotSlot> snapshot_slots{};
 
@@ -389,6 +400,8 @@ int main() {
             if (execution_backend != ExecutionBackend::Cuda) return nullptr;
             return backend_kind == BackendKind::StableFluids001 ? stable_runtime.sim_stream : visual_runtime.sim_stream;
         };
+
+        auto current_solver_stats = [&]() -> SolverStats& { return backend_kind == BackendKind::StableFluids001 ? stable_solver_stats : visual_solver_stats; };
 
         auto current_grid = [&]() {
             struct GridInfo {
