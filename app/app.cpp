@@ -322,7 +322,7 @@ namespace app {
 
         std::array<SemaphoreSubmitInfo, 1> volume_waits{};
         std::span<const SemaphoreSubmitInfo> extra_waits{};
-        if (field) {
+        if (field && field->timeline_semaphore) {
             volume_waits[0] = SemaphoreSubmitInfo{
                 .semaphore = field->timeline_semaphore,
                 .value     = field->ready_generation,

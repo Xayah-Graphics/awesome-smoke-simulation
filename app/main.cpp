@@ -2,6 +2,8 @@
 #define NOMINMAX
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 #include "stable-fluids.h"
 #include "visual-simulation-of-smoke.h"
@@ -92,11 +94,18 @@ namespace {
         vk::raii::DeviceMemory memory{nullptr};
         vk::raii::Semaphore timeline_semaphore{nullptr};
         vk::raii::DescriptorSet descriptor_set{nullptr};
+        void* mapped_ptr                           = nullptr;
         cudaExternalMemory_t external_memory       = nullptr;
         cudaExternalSemaphore_t external_semaphore = nullptr;
         void* cuda_ptr                             = nullptr;
         uint64_t ready_generation                  = 0;
         uint64_t last_used_submit_serial           = 0;
+        uint32_t nx                                = 0;
+        uint32_t ny                                = 0;
+        uint32_t nz                                = 0;
+        float cell_size                            = 1.0f;
+        app::FieldSemantic semantic                = app::FieldSemantic::GenericScalar;
+        std::string_view label{};
     };
 
     struct StableStepConfig {
@@ -466,24 +475,26 @@ int main() {
                 return std::nullopt;
             }
 
-            const auto& field = current_field();
-            const auto grid   = current_grid();
-            const auto& slot  = snapshot_slots.at(static_cast<size_t>(viewer_runtime.active_snapshot_slot));
+            const auto& slot = snapshot_slots.at(static_cast<size_t>(viewer_runtime.active_snapshot_slot));
             return app::ScalarFieldView{
                 .descriptor_set     = *slot.descriptor_set,
-                .timeline_semaphore = *slot.timeline_semaphore,
+                .timeline_semaphore = slot.external_semaphore != nullptr ? *slot.timeline_semaphore : vk::Semaphore{},
                 .ready_generation   = slot.ready_generation,
-                .nx                 = grid.nx,
-                .ny                 = grid.ny,
-                .nz                 = grid.nz,
-                .cell_size          = grid.cell_size,
-                .semantic           = field.semantic,
-                .label              = field.label,
+                .nx                 = slot.nx,
+                .ny                 = slot.ny,
+                .nz                 = slot.nz,
+                .cell_size          = slot.cell_size,
+                .semantic           = slot.semantic,
+                .label              = slot.label,
             };
         };
 
         auto destroy_snapshot_slots = [&]() {
             for (auto& slot : snapshot_slots) {
+                if (slot.mapped_ptr != nullptr) {
+                    slot.memory.unmapMemory();
+                    slot.mapped_ptr = nullptr;
+                }
                 if (slot.cuda_ptr != nullptr) {
                     cudaFree(slot.cuda_ptr);
                     slot.cuda_ptr = nullptr;
@@ -498,6 +509,12 @@ int main() {
                 }
                 slot.ready_generation        = 0;
                 slot.last_used_submit_serial = 0;
+                slot.nx                      = 0;
+                slot.ny                      = 0;
+                slot.nz                      = 0;
+                slot.cell_size               = 1.0f;
+                slot.semantic                = app::FieldSemantic::GenericScalar;
+                slot.label                   = {};
             }
             snapshot_slots.clear();
             viewer_runtime.field_bytes          = 0;
@@ -652,82 +669,124 @@ int main() {
             for (uint32_t slot_index = 0; slot_index < snapshot_slot_count; ++slot_index) {
                 SnapshotSlot slot{};
                 slot.descriptor_set = std::move(descriptor_sets[slot_index]);
+                if (execution_backend == ExecutionBackend::Cuda) {
+#if defined(_WIN32)
+                    constexpr auto memory_handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+                    constexpr auto semaphore_handle_type = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
+#else
+                    constexpr auto memory_handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+                    constexpr auto semaphore_handle_type = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
+#endif
+                    vk::SemaphoreTypeCreateInfo timeline_semaphore_ci{
+                        .semaphoreType = vk::SemaphoreType::eTimeline,
+                        .initialValue  = 0,
+                    };
+                    vk::ExportSemaphoreCreateInfo export_semaphore_ci{
+                        .pNext       = &timeline_semaphore_ci,
+                        .handleTypes = semaphore_handle_type,
+                    };
+                    vk::SemaphoreCreateInfo semaphore_ci{
+                        .pNext = &export_semaphore_ci,
+                    };
+                    slot.timeline_semaphore = vk::raii::Semaphore{renderer.vk_context().device, semaphore_ci};
 
-                vk::SemaphoreTypeCreateInfo timeline_semaphore_ci{
-                    .semaphoreType = vk::SemaphoreType::eTimeline,
-                    .initialValue  = 0,
-                };
-                vk::ExportSemaphoreCreateInfo export_semaphore_ci{
-                    .pNext       = &timeline_semaphore_ci,
-                    .handleTypes = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32,
-                };
-                vk::SemaphoreCreateInfo semaphore_ci{
-                    .pNext = &export_semaphore_ci,
-                };
-                slot.timeline_semaphore = vk::raii::Semaphore{renderer.vk_context().device, semaphore_ci};
+                    vk::ExternalMemoryBufferCreateInfo external_buffer_ci{
+                        .handleTypes = memory_handle_type,
+                    };
+                    vk::BufferCreateInfo buffer_ci{
+                        .pNext       = &external_buffer_ci,
+                        .size        = viewer_runtime.field_bytes,
+                        .usage       = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
+                        .sharingMode = vk::SharingMode::eExclusive,
+                    };
+                    slot.buffer = vk::raii::Buffer{renderer.vk_context().device, buffer_ci};
 
-                vk::ExternalMemoryBufferCreateInfo external_buffer_ci{
-                    .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32,
-                };
-                vk::BufferCreateInfo buffer_ci{
-                    .pNext       = &external_buffer_ci,
-                    .size        = viewer_runtime.field_bytes,
-                    .usage       = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
-                    .sharingMode = vk::SharingMode::eExclusive,
-                };
-                slot.buffer = vk::raii::Buffer{renderer.vk_context().device, buffer_ci};
-
-                const vk::MemoryRequirements requirements = slot.buffer.getMemoryRequirements();
-                vk::ExportMemoryAllocateInfo export_memory_ci{
-                    .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32,
-                };
-                vk::MemoryAllocateInfo alloc_ci{
-                    .pNext           = &export_memory_ci,
-                    .allocationSize  = requirements.size,
-                    .memoryTypeIndex = vk::memory::find_memory_type(renderer.vk_context().physical_device, requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal),
-                };
-                slot.memory = vk::raii::DeviceMemory{renderer.vk_context().device, alloc_ci};
-                slot.buffer.bindMemory(*slot.memory, 0);
+                    const vk::MemoryRequirements requirements = slot.buffer.getMemoryRequirements();
+                    vk::ExportMemoryAllocateInfo export_memory_ci{
+                        .handleTypes = memory_handle_type,
+                    };
+                    vk::MemoryAllocateInfo alloc_ci{
+                        .pNext           = &export_memory_ci,
+                        .allocationSize  = requirements.size,
+                        .memoryTypeIndex = vk::memory::find_memory_type(renderer.vk_context().physical_device, requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal),
+                    };
+                    slot.memory = vk::raii::DeviceMemory{renderer.vk_context().device, alloc_ci};
+                    slot.buffer.bindMemory(*slot.memory, 0);
 
 #if defined(_WIN32)
-                vk::MemoryGetWin32HandleInfoKHR handle_info{
-                    .memory     = *slot.memory,
-                    .handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32,
-                };
-                HANDLE memory_handle = renderer.vk_context().device.getMemoryWin32HandleKHR(handle_info);
-                if (memory_handle == nullptr) {
-                    throw std::runtime_error("getMemoryWin32HandleKHR returned a null handle");
-                }
+                    vk::MemoryGetWin32HandleInfoKHR handle_info{
+                        .memory     = *slot.memory,
+                        .handleType = memory_handle_type,
+                    };
+                    HANDLE memory_handle = renderer.vk_context().device.getMemoryWin32HandleKHR(handle_info);
+                    if (memory_handle == nullptr) throw std::runtime_error("getMemoryWin32HandleKHR returned a null handle");
 
-                cudaExternalMemoryHandleDesc external_desc{};
-                external_desc.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
-                external_desc.handle.win32.handle = memory_handle;
-                external_desc.size                = requirements.size;
-                cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
-                CloseHandle(memory_handle);
+                    cudaExternalMemoryHandleDesc external_desc{};
+                    external_desc.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
+                    external_desc.handle.win32.handle = memory_handle;
+                    external_desc.size                = requirements.size;
+                    cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
+                    CloseHandle(memory_handle);
 
-                cudaExternalMemoryBufferDesc buffer_desc{};
-                buffer_desc.offset = 0;
-                buffer_desc.size   = viewer_runtime.field_bytes;
-                cuda_ok(cudaExternalMemoryGetMappedBuffer(&slot.cuda_ptr, slot.external_memory, &buffer_desc), "cudaExternalMemoryGetMappedBuffer");
+                    vk::SemaphoreGetWin32HandleInfoKHR semaphore_handle_info{
+                        .semaphore  = *slot.timeline_semaphore,
+                        .handleType = semaphore_handle_type,
+                    };
+                    HANDLE semaphore_handle = renderer.vk_context().device.getSemaphoreWin32HandleKHR(semaphore_handle_info);
+                    if (semaphore_handle == nullptr) throw std::runtime_error("getSemaphoreWin32HandleKHR returned a null handle");
 
-                vk::SemaphoreGetWin32HandleInfoKHR semaphore_handle_info{
-                    .semaphore  = *slot.timeline_semaphore,
-                    .handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32,
-                };
-                HANDLE semaphore_handle = renderer.vk_context().device.getSemaphoreWin32HandleKHR(semaphore_handle_info);
-                if (semaphore_handle == nullptr) {
-                    throw std::runtime_error("getSemaphoreWin32HandleKHR returned a null handle");
-                }
-
-                cudaExternalSemaphoreHandleDesc external_semaphore_desc{};
-                external_semaphore_desc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
-                external_semaphore_desc.handle.win32.handle = semaphore_handle;
-                cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
-                CloseHandle(semaphore_handle);
+                    cudaExternalSemaphoreHandleDesc external_semaphore_desc{};
+                    external_semaphore_desc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
+                    external_semaphore_desc.handle.win32.handle = semaphore_handle;
+                    cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
+                    CloseHandle(semaphore_handle);
 #else
-                throw std::runtime_error("smoke-visualizer currently requires Windows external memory interop");
+                    vk::MemoryGetFdInfoKHR handle_info{
+                        .memory     = *slot.memory,
+                        .handleType = memory_handle_type,
+                    };
+                    const int memory_fd = renderer.vk_context().device.getMemoryFdKHR(handle_info);
+                    if (memory_fd < 0) throw std::runtime_error("getMemoryFdKHR returned an invalid fd");
+
+                    cudaExternalMemoryHandleDesc external_desc{};
+                    external_desc.type      = cudaExternalMemoryHandleTypeOpaqueFd;
+                    external_desc.handle.fd = memory_fd;
+                    external_desc.size      = requirements.size;
+                    cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
+
+                    vk::SemaphoreGetFdInfoKHR semaphore_handle_info{
+                        .semaphore  = *slot.timeline_semaphore,
+                        .handleType = semaphore_handle_type,
+                    };
+                    const int semaphore_fd = renderer.vk_context().device.getSemaphoreFdKHR(semaphore_handle_info);
+                    if (semaphore_fd < 0) throw std::runtime_error("getSemaphoreFdKHR returned an invalid fd");
+
+                    cudaExternalSemaphoreHandleDesc external_semaphore_desc{};
+                    external_semaphore_desc.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+                    external_semaphore_desc.handle.fd = semaphore_fd;
+                    cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
 #endif
+
+                    cudaExternalMemoryBufferDesc buffer_desc{};
+                    buffer_desc.offset = 0;
+                    buffer_desc.size   = viewer_runtime.field_bytes;
+                    cuda_ok(cudaExternalMemoryGetMappedBuffer(&slot.cuda_ptr, slot.external_memory, &buffer_desc), "cudaExternalMemoryGetMappedBuffer");
+                } else {
+                    vk::BufferCreateInfo buffer_ci{
+                        .size        = viewer_runtime.field_bytes,
+                        .usage       = vk::BufferUsageFlagBits::eStorageBuffer,
+                        .sharingMode = vk::SharingMode::eExclusive,
+                    };
+                    slot.buffer = vk::raii::Buffer{renderer.vk_context().device, buffer_ci};
+                    const vk::MemoryRequirements requirements = slot.buffer.getMemoryRequirements();
+                    vk::MemoryAllocateInfo alloc_ci{
+                        .allocationSize  = requirements.size,
+                        .memoryTypeIndex = vk::memory::find_memory_type(renderer.vk_context().physical_device, requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent),
+                    };
+                    slot.memory = vk::raii::DeviceMemory{renderer.vk_context().device, alloc_ci};
+                    slot.buffer.bindMemory(*slot.memory, 0);
+                    slot.mapped_ptr = slot.memory.mapMemory(0, requirements.size);
+                }
 
                 vk::DescriptorBufferInfo field_info{
                     .buffer = *slot.buffer,
@@ -766,6 +825,10 @@ int main() {
             auto& slot        = snapshot_slots.at(static_cast<size_t>(slot_index));
             const auto& field = current_field();
             const auto grid   = current_grid();
+            auto copy_host_snapshot = [&](const void* source, const char* what) {
+                if (slot.mapped_ptr == nullptr) throw std::runtime_error(std::string(what) + ": mapped snapshot buffer is null");
+                std::memcpy(slot.mapped_ptr, source, static_cast<size_t>(viewer_runtime.field_bytes));
+            };
 
             if (backend_kind == BackendKind::StableFluids001) {
                 if (execution_backend == ExecutionBackend::Cuda) {
@@ -778,7 +841,7 @@ int main() {
                     }
                 } else {
                     if (field.id == FieldId::Density) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync stable density host snapshot");
+                        copy_host_snapshot(stable_runtime.density, "stable density host snapshot");
                     } else {
                         auto stable_index = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
                         for (uint32_t z = 0; z < grid.nz; ++z)
@@ -795,7 +858,7 @@ int main() {
                                                        + stable_runtime.velocity_z[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z) + 1, static_cast<int>(grid.nx), static_cast<int>(grid.ny))]);
                                     stable_runtime.temporary_density[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))] = std::sqrt(vx * vx + vy * vy + vz * vz);
                                 }
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.temporary_density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync stable velocity magnitude host snapshot");
+                        copy_host_snapshot(stable_runtime.temporary_density, "stable velocity magnitude host snapshot");
                     }
                 }
             } else {
@@ -812,9 +875,9 @@ int main() {
                 } else {
                     auto visual_index = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
                     if (field.id == FieldId::Density) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.density, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual density host snapshot");
+                        copy_host_snapshot(visual_runtime.density, "visual density host snapshot");
                     } else if (field.id == FieldId::Temperature) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temperature, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual temperature host snapshot");
+                        copy_host_snapshot(visual_runtime.temperature, "visual temperature host snapshot");
                     } else {
                         for (uint32_t z = 0; z < grid.nz; ++z)
                             for (uint32_t y = 0; y < grid.ny; ++y)
@@ -830,20 +893,28 @@ int main() {
                                                        + visual_runtime.velocity_z[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z) + 1, static_cast<int>(grid.nx), static_cast<int>(grid.ny))]);
                                     visual_runtime.temporary_pressure[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))] = std::sqrt(vx * vx + vy * vy + vz * vz);
                                 }
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temporary_pressure, viewer_runtime.field_bytes, cudaMemcpyHostToDevice, nullptr), "cudaMemcpyAsync visual velocity magnitude host snapshot");
+                        copy_host_snapshot(visual_runtime.temporary_pressure, "visual velocity magnitude host snapshot");
                     }
                 }
             }
 
             const uint64_t next_generation = viewer_runtime.snapshot_generation + 1;
-            cudaExternalSemaphoreSignalParams signal_params{};
-            signal_params.params.fence.value = next_generation;
-            cuda_ok(cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, current_stream()), "cudaSignalExternalSemaphoresAsync snapshot");
-            cuda_ok(cudaStreamSynchronize(current_stream()), "cudaStreamSynchronize snapshot");
+            if (execution_backend == ExecutionBackend::Cuda) {
+                cudaExternalSemaphoreSignalParams signal_params{};
+                signal_params.params.fence.value = next_generation;
+                cuda_ok(cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, current_stream()), "cudaSignalExternalSemaphoresAsync snapshot");
+                cuda_ok(cudaStreamSynchronize(current_stream()), "cudaStreamSynchronize snapshot");
+            }
             slot.ready_generation               = next_generation;
             viewer_runtime.snapshot_generation  = next_generation;
             viewer_runtime.active_snapshot_slot = slot_index;
             viewer_runtime.steps_since_snapshot = 0;
+            slot.nx                             = grid.nx;
+            slot.ny                             = grid.ny;
+            slot.nz                             = grid.nz;
+            slot.cell_size                      = grid.cell_size;
+            slot.semantic                       = field.semantic;
+            slot.label                          = field.label;
             const auto elapsed_ms               = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
             auto& solver_stats                  = current_solver_stats();
             accumulate_sample(elapsed_ms, solver_stats.last_snapshot_ms, solver_stats.average_snapshot_ms, solver_stats.snapshot_count);
@@ -852,17 +923,15 @@ int main() {
         auto reset_backend = [&]() {
             nvtx3::scoped_range range{"smoke_app.reset_backend"};
 
-            const auto timeline_features = renderer.vk_context().physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
-            if (!timeline_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) {
-                throw std::runtime_error("smoke-visualizer requires Vulkan timeline semaphore support");
-            }
+            if (execution_backend == ExecutionBackend::Cuda) {
+                const auto timeline_features = renderer.vk_context().physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
+                if (!timeline_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("smoke-visualizer requires Vulkan timeline semaphore support for CUDA execution");
 
-            int cuda_device_index = 0;
-            cuda_ok(cudaGetDevice(&cuda_device_index), "cudaGetDevice");
-            int cuda_timeline_semaphore_interop_supported = 0;
-            cuda_ok(cudaDeviceGetAttribute(&cuda_timeline_semaphore_interop_supported, cudaDevAttrTimelineSemaphoreInteropSupported, cuda_device_index), "cudaDeviceGetAttribute cudaDevAttrTimelineSemaphoreInteropSupported");
-            if (cuda_timeline_semaphore_interop_supported == 0) {
-                throw std::runtime_error("smoke-visualizer requires CUDA timeline semaphore interop support");
+                int cuda_device_index = 0;
+                cuda_ok(cudaGetDevice(&cuda_device_index), "cudaGetDevice");
+                int cuda_timeline_semaphore_interop_supported = 0;
+                cuda_ok(cudaDeviceGetAttribute(&cuda_timeline_semaphore_interop_supported, cudaDevAttrTimelineSemaphoreInteropSupported, cuda_device_index), "cudaDeviceGetAttribute cudaDevAttrTimelineSemaphoreInteropSupported");
+                if (cuda_timeline_semaphore_interop_supported == 0) throw std::runtime_error("smoke-visualizer requires CUDA timeline semaphore interop support for CUDA execution");
             }
 
             destroy_everything();
@@ -1131,6 +1200,7 @@ int main() {
             }
 
             snapshot_current_field_to_slot(0, "smoke_app.reset_backend.initial_snapshot");
+            current_solver_stats() = {};
             apply_field_defaults(current_field());
             if (const auto field = active_snapshot()) {
                 renderer.frame_volume(*field);
@@ -1220,9 +1290,12 @@ int main() {
                         ImGui::Text("Diffuse budget: %d iterations -> %d V-cycles, 1 smooth, %d coarse", stable_settings.desc.diffuse_iterations, diffusion_v_cycles, diffusion_coarse_steps);
                     } else
                         ImGui::TextUnformatted("Density diffusion: Disabled");
-                    if (stable_settings.desc.viscosity > 0.0f)
-                        ImGui::Text("Velocity diffusion: RBGS (%d iterations)", stable_settings.desc.diffuse_iterations);
-                    else
+                    if (stable_settings.desc.viscosity > 0.0f) {
+                        const int viscosity_v_cycles     = std::max(1, stable_settings.desc.diffuse_iterations / 12);
+                        const int viscosity_coarse_steps = std::max(6, stable_settings.desc.diffuse_iterations / 4);
+                        ImGui::Text("Velocity diffusion: Multigrid V-cycle");
+                        ImGui::Text("Viscosity budget: %d iterations -> %d V-cycles, 1 smooth, %d coarse", stable_settings.desc.diffuse_iterations, viscosity_v_cycles, viscosity_coarse_steps);
+                    } else
                         ImGui::TextUnformatted("Velocity diffusion: Disabled");
                     ImGui::Text("Hierarchy: %d levels, coarsest %d x %d x %d", hierarchy[0], hierarchy[1], hierarchy[2], hierarchy[3]);
                 } else {

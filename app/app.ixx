@@ -102,8 +102,8 @@ export namespace app {
 
         FieldRendererApp(const FieldRendererApp&)                = delete;
         FieldRendererApp& operator=(const FieldRendererApp&)     = delete;
-        FieldRendererApp(FieldRendererApp&&) noexcept            = default;
-        FieldRendererApp& operator=(FieldRendererApp&&) noexcept = default;
+        FieldRendererApp(FieldRendererApp&&) noexcept            = delete;
+        FieldRendererApp& operator=(FieldRendererApp&&) noexcept = delete;
 
         [[nodiscard]] bool should_close() const;
         FrameInfo begin_frame();
