@@ -32,11 +32,6 @@ namespace {
         VisualSmoke002  = 1,
     };
 
-    enum class ExecutionBackend : uint32_t {
-        Parallel = 0,
-        Cuda     = 1,
-    };
-
     enum class FieldId : uint32_t {
         Density           = 0,
         Temperature       = 1,
@@ -94,7 +89,6 @@ namespace {
         vk::raii::DeviceMemory memory{nullptr};
         vk::raii::Semaphore timeline_semaphore{nullptr};
         vk::raii::DescriptorSet descriptor_set{nullptr};
-        void* mapped_ptr                           = nullptr;
         cudaExternalMemory_t external_memory       = nullptr;
         cudaExternalSemaphore_t external_semaphore = nullptr;
         void* cuda_ptr                             = nullptr;
@@ -160,20 +154,6 @@ namespace {
         float* temporary_previous_velocity_z = nullptr;
         float* temporary_pressure            = nullptr;
         float* temporary_divergence          = nullptr;
-        std::vector<float> host_density{};
-        std::vector<float> host_velocity_x{};
-        std::vector<float> host_velocity_y{};
-        std::vector<float> host_velocity_z{};
-        std::vector<float> host_temporary_density{};
-        std::vector<float> host_temporary_velocity_x{};
-        std::vector<float> host_temporary_velocity_y{};
-        std::vector<float> host_temporary_velocity_z{};
-        std::vector<float> host_temporary_previous_density{};
-        std::vector<float> host_temporary_previous_velocity_x{};
-        std::vector<float> host_temporary_previous_velocity_y{};
-        std::vector<float> host_temporary_previous_velocity_z{};
-        std::vector<float> host_temporary_pressure{};
-        std::vector<float> host_temporary_divergence{};
     };
 
     struct VisualStepConfig {
@@ -230,25 +210,6 @@ namespace {
         float* temporary_force_x              = nullptr;
         float* temporary_force_y              = nullptr;
         float* temporary_force_z              = nullptr;
-        std::vector<float> host_density{};
-        std::vector<float> host_temperature{};
-        std::vector<float> host_velocity_x{};
-        std::vector<float> host_velocity_y{};
-        std::vector<float> host_velocity_z{};
-        std::vector<float> host_temporary_previous_density{};
-        std::vector<float> host_temporary_previous_temperature{};
-        std::vector<float> host_temporary_previous_velocity_x{};
-        std::vector<float> host_temporary_previous_velocity_y{};
-        std::vector<float> host_temporary_previous_velocity_z{};
-        std::vector<float> host_temporary_pressure{};
-        std::vector<float> host_temporary_divergence{};
-        std::vector<float> host_temporary_omega_x{};
-        std::vector<float> host_temporary_omega_y{};
-        std::vector<float> host_temporary_omega_z{};
-        std::vector<float> host_temporary_omega_magnitude{};
-        std::vector<float> host_temporary_force_x{};
-        std::vector<float> host_temporary_force_y{};
-        std::vector<float> host_temporary_force_z{};
     };
 
     auto cuda_ok(const cudaError_t status, const char* what) {
@@ -278,8 +239,7 @@ int main() {
     try {
         app::FieldRendererApp renderer;
         PlaybackState playback{};
-        BackendKind backend_kind           = BackendKind::StableFluids001;
-        ExecutionBackend execution_backend = ExecutionBackend::Cuda;
+        BackendKind backend_kind = BackendKind::StableFluids001;
         StableSettings stable_settings{};
         StableRuntime stable_runtime{};
         SolverStats stable_solver_stats{};
@@ -293,106 +253,6 @@ int main() {
         auto velocity_x_bytes    = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
         auto velocity_y_bytes    = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
         auto velocity_z_bytes    = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
-        auto scalar_elements     = [&](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<size_t>(scalar_bytes(nx, ny, nz) / sizeof(float)); };
-        auto velocity_x_elements = [&](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<size_t>(velocity_x_bytes(nx, ny, nz) / sizeof(float)); };
-        auto velocity_y_elements = [&](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<size_t>(velocity_y_bytes(nx, ny, nz) / sizeof(float)); };
-        auto velocity_z_elements = [&](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<size_t>(velocity_z_bytes(nx, ny, nz) / sizeof(float)); };
-
-        auto add_stable_source_host = [&](float* density, float* velocity_x, float* velocity_y, float* velocity_z, const int32_t nx, const int32_t ny, const int32_t nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float velocity_source_x, const float velocity_source_y,
-                                          const float velocity_source_z) {
-            const float radius2 = radius * radius;
-            auto stable_index   = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
-            for (int z = 0; z < nz; ++z)
-                for (int y = 0; y < ny; ++y)
-                    for (int x = 0; x < nx; ++x) {
-                        const float dx    = (static_cast<float>(x) + 0.5f) - center_x;
-                        const float dy    = (static_cast<float>(y) + 0.5f) - center_y;
-                        const float dz    = (static_cast<float>(z) + 0.5f) - center_z;
-                        const float dist2 = dx * dx + dy * dy + dz * dz;
-                        if (dist2 > radius2) continue;
-                        density[stable_index(x, y, z, nx, ny)] += density_amount * ((1.0f - dist2 / radius2) > 0.0f ? (1.0f - dist2 / radius2) : 0.0f);
-                    }
-            for (int z = 0; z < nz; ++z)
-                for (int y = 0; y < ny; ++y)
-                    for (int x = 0; x <= nx; ++x) {
-                        const float dx    = static_cast<float>(x) - center_x;
-                        const float dy    = (static_cast<float>(y) + 0.5f) - center_y;
-                        const float dz    = (static_cast<float>(z) + 0.5f) - center_z;
-                        const float dist2 = dx * dx + dy * dy + dz * dz;
-                        if (dist2 > radius2) continue;
-                        velocity_x[stable_index(x, y, z, nx + 1, ny)] += velocity_source_x * ((1.0f - dist2 / radius2) > 0.0f ? (1.0f - dist2 / radius2) : 0.0f);
-                    }
-            for (int z = 0; z < nz; ++z)
-                for (int y = 0; y <= ny; ++y)
-                    for (int x = 0; x < nx; ++x) {
-                        const float dx    = (static_cast<float>(x) + 0.5f) - center_x;
-                        const float dy    = static_cast<float>(y) - center_y;
-                        const float dz    = (static_cast<float>(z) + 0.5f) - center_z;
-                        const float dist2 = dx * dx + dy * dy + dz * dz;
-                        if (dist2 > radius2) continue;
-                        velocity_y[stable_index(x, y, z, nx, ny + 1)] += velocity_source_y * ((1.0f - dist2 / radius2) > 0.0f ? (1.0f - dist2 / radius2) : 0.0f);
-                    }
-            for (int z = 0; z <= nz; ++z)
-                for (int y = 0; y < ny; ++y)
-                    for (int x = 0; x < nx; ++x) {
-                        const float dx    = (static_cast<float>(x) + 0.5f) - center_x;
-                        const float dy    = (static_cast<float>(y) + 0.5f) - center_y;
-                        const float dz    = static_cast<float>(z) - center_z;
-                        const float dist2 = dx * dx + dy * dy + dz * dz;
-                        if (dist2 > radius2) continue;
-                        velocity_z[stable_index(x, y, z, nx, ny)] += velocity_source_z * ((1.0f - dist2 / radius2) > 0.0f ? (1.0f - dist2 / radius2) : 0.0f);
-                    }
-        };
-
-        auto add_visual_source_host = [&](float* density, float* temperature, float* velocity_x, float* velocity_y, float* velocity_z, const int32_t nx, const int32_t ny, const int32_t nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float temperature_amount,
-                                          const float velocity_source_x, const float velocity_source_y, const float velocity_source_z) {
-            const float radius2 = radius * radius;
-            auto visual_index   = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
-            for (int z = 0; z < nz; ++z)
-                for (int y = 0; y < ny; ++y)
-                    for (int x = 0; x < nx; ++x) {
-                        const float dx    = (static_cast<float>(x) + 0.5f) - center_x;
-                        const float dy    = (static_cast<float>(y) + 0.5f) - center_y;
-                        const float dz    = (static_cast<float>(z) + 0.5f) - center_z;
-                        const float dist2 = dx * dx + dy * dy + dz * dz;
-                        if (dist2 > radius2) continue;
-                        const float weight = (1.0f - dist2 / radius2) > 0.0f ? (1.0f - dist2 / radius2) : 0.0f;
-                        const auto index   = visual_index(x, y, z, nx, ny);
-                        density[index] += density_amount * weight;
-                        temperature[index] += temperature_amount * weight;
-                    }
-            for (int z = 0; z < nz; ++z)
-                for (int y = 0; y < ny; ++y)
-                    for (int x = 0; x <= nx; ++x) {
-                        const float dx    = static_cast<float>(x) - center_x;
-                        const float dy    = (static_cast<float>(y) + 0.5f) - center_y;
-                        const float dz    = (static_cast<float>(z) + 0.5f) - center_z;
-                        const float dist2 = dx * dx + dy * dy + dz * dz;
-                        if (dist2 > radius2) continue;
-                        velocity_x[visual_index(x, y, z, nx + 1, ny)] += velocity_source_x * ((1.0f - dist2 / radius2) > 0.0f ? (1.0f - dist2 / radius2) : 0.0f);
-                    }
-            for (int z = 0; z < nz; ++z)
-                for (int y = 0; y <= ny; ++y)
-                    for (int x = 0; x < nx; ++x) {
-                        const float dx    = (static_cast<float>(x) + 0.5f) - center_x;
-                        const float dy    = static_cast<float>(y) - center_y;
-                        const float dz    = (static_cast<float>(z) + 0.5f) - center_z;
-                        const float dist2 = dx * dx + dy * dy + dz * dz;
-                        if (dist2 > radius2) continue;
-                        velocity_y[visual_index(x, y, z, nx, ny + 1)] += velocity_source_y * ((1.0f - dist2 / radius2) > 0.0f ? (1.0f - dist2 / radius2) : 0.0f);
-                    }
-            for (int z = 0; z <= nz; ++z)
-                for (int y = 0; y < ny; ++y)
-                    for (int x = 0; x < nx; ++x) {
-                        const float dx    = (static_cast<float>(x) + 0.5f) - center_x;
-                        const float dy    = (static_cast<float>(y) + 0.5f) - center_y;
-                        const float dz    = static_cast<float>(z) - center_z;
-                        const float dist2 = dx * dx + dy * dy + dz * dz;
-                        if (dist2 > radius2) continue;
-                        velocity_z[visual_index(x, y, z, nx, ny)] += velocity_source_z * ((1.0f - dist2 / radius2) > 0.0f ? (1.0f - dist2 / radius2) : 0.0f);
-                    }
-        };
-
         auto current_fields = [&]() -> std::span<const FieldChoice> { return backend_kind == BackendKind::StableFluids001 ? std::span<const FieldChoice>(stable_fields) : std::span<const FieldChoice>(visual_fields); };
 
         auto current_field_index = [&]() -> int& { return backend_kind == BackendKind::StableFluids001 ? stable_settings.selected_field : visual_settings.selected_field; };
@@ -404,10 +264,7 @@ int main() {
             return fields[static_cast<size_t>(selected)];
         };
 
-        auto current_stream = [&]() -> cudaStream_t {
-            if (execution_backend != ExecutionBackend::Cuda) return nullptr;
-            return backend_kind == BackendKind::StableFluids001 ? stable_runtime.sim_stream : visual_runtime.sim_stream;
-        };
+        auto current_stream = [&]() -> cudaStream_t { return backend_kind == BackendKind::StableFluids001 ? stable_runtime.sim_stream : visual_runtime.sim_stream; };
 
         auto current_solver_stats = [&]() -> SolverStats& { return backend_kind == BackendKind::StableFluids001 ? stable_solver_stats : visual_solver_stats; };
         auto accumulate_sample    = [](const double sample_ms, double& last_ms, double& average_ms, uint64_t& count) {
@@ -491,10 +348,6 @@ int main() {
 
         auto destroy_snapshot_slots = [&]() {
             for (auto& slot : snapshot_slots) {
-                if (slot.mapped_ptr != nullptr) {
-                    slot.memory.unmapMemory();
-                    slot.mapped_ptr = nullptr;
-                }
                 if (slot.cuda_ptr != nullptr) {
                     cudaFree(slot.cuda_ptr);
                     slot.cuda_ptr = nullptr;
@@ -551,20 +404,6 @@ int main() {
                 stable_runtime.sim_stream = nullptr;
             }
             stable_runtime.device_allocated = false;
-            stable_runtime.host_density.clear();
-            stable_runtime.host_velocity_x.clear();
-            stable_runtime.host_velocity_y.clear();
-            stable_runtime.host_velocity_z.clear();
-            stable_runtime.host_temporary_density.clear();
-            stable_runtime.host_temporary_velocity_x.clear();
-            stable_runtime.host_temporary_velocity_y.clear();
-            stable_runtime.host_temporary_velocity_z.clear();
-            stable_runtime.host_temporary_previous_density.clear();
-            stable_runtime.host_temporary_previous_velocity_x.clear();
-            stable_runtime.host_temporary_previous_velocity_y.clear();
-            stable_runtime.host_temporary_previous_velocity_z.clear();
-            stable_runtime.host_temporary_pressure.clear();
-            stable_runtime.host_temporary_divergence.clear();
             stable_runtime.density                       = nullptr;
             stable_runtime.velocity_x                    = nullptr;
             stable_runtime.velocity_y                    = nullptr;
@@ -613,25 +452,6 @@ int main() {
                 visual_runtime.sim_stream = nullptr;
             }
             visual_runtime.device_allocated = false;
-            visual_runtime.host_density.clear();
-            visual_runtime.host_temperature.clear();
-            visual_runtime.host_velocity_x.clear();
-            visual_runtime.host_velocity_y.clear();
-            visual_runtime.host_velocity_z.clear();
-            visual_runtime.host_temporary_previous_density.clear();
-            visual_runtime.host_temporary_previous_temperature.clear();
-            visual_runtime.host_temporary_previous_velocity_x.clear();
-            visual_runtime.host_temporary_previous_velocity_y.clear();
-            visual_runtime.host_temporary_previous_velocity_z.clear();
-            visual_runtime.host_temporary_pressure.clear();
-            visual_runtime.host_temporary_divergence.clear();
-            visual_runtime.host_temporary_omega_x.clear();
-            visual_runtime.host_temporary_omega_y.clear();
-            visual_runtime.host_temporary_omega_z.clear();
-            visual_runtime.host_temporary_omega_magnitude.clear();
-            visual_runtime.host_temporary_force_x.clear();
-            visual_runtime.host_temporary_force_y.clear();
-            visual_runtime.host_temporary_force_z.clear();
             visual_runtime.density                        = nullptr;
             visual_runtime.temperature                    = nullptr;
             visual_runtime.velocity_x                     = nullptr;
@@ -669,124 +489,107 @@ int main() {
             for (uint32_t slot_index = 0; slot_index < snapshot_slot_count; ++slot_index) {
                 SnapshotSlot slot{};
                 slot.descriptor_set = std::move(descriptor_sets[slot_index]);
-                if (execution_backend == ExecutionBackend::Cuda) {
 #if defined(_WIN32)
-                    constexpr auto memory_handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
-                    constexpr auto semaphore_handle_type = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
+                constexpr auto memory_handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+                constexpr auto semaphore_handle_type = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
 #else
-                    constexpr auto memory_handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
-                    constexpr auto semaphore_handle_type = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
+                constexpr auto memory_handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+                constexpr auto semaphore_handle_type = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
 #endif
-                    vk::SemaphoreTypeCreateInfo timeline_semaphore_ci{
-                        .semaphoreType = vk::SemaphoreType::eTimeline,
-                        .initialValue  = 0,
-                    };
-                    vk::ExportSemaphoreCreateInfo export_semaphore_ci{
-                        .pNext       = &timeline_semaphore_ci,
-                        .handleTypes = semaphore_handle_type,
-                    };
-                    vk::SemaphoreCreateInfo semaphore_ci{
-                        .pNext = &export_semaphore_ci,
-                    };
-                    slot.timeline_semaphore = vk::raii::Semaphore{renderer.vk_context().device, semaphore_ci};
+                vk::SemaphoreTypeCreateInfo timeline_semaphore_ci{
+                    .semaphoreType = vk::SemaphoreType::eTimeline,
+                    .initialValue  = 0,
+                };
+                vk::ExportSemaphoreCreateInfo export_semaphore_ci{
+                    .pNext       = &timeline_semaphore_ci,
+                    .handleTypes = semaphore_handle_type,
+                };
+                vk::SemaphoreCreateInfo semaphore_ci{
+                    .pNext = &export_semaphore_ci,
+                };
+                slot.timeline_semaphore = vk::raii::Semaphore{renderer.vk_context().device, semaphore_ci};
 
-                    vk::ExternalMemoryBufferCreateInfo external_buffer_ci{
-                        .handleTypes = memory_handle_type,
-                    };
-                    vk::BufferCreateInfo buffer_ci{
-                        .pNext       = &external_buffer_ci,
-                        .size        = viewer_runtime.field_bytes,
-                        .usage       = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
-                        .sharingMode = vk::SharingMode::eExclusive,
-                    };
-                    slot.buffer = vk::raii::Buffer{renderer.vk_context().device, buffer_ci};
+                vk::ExternalMemoryBufferCreateInfo external_buffer_ci{
+                    .handleTypes = memory_handle_type,
+                };
+                vk::BufferCreateInfo buffer_ci{
+                    .pNext       = &external_buffer_ci,
+                    .size        = viewer_runtime.field_bytes,
+                    .usage       = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
+                    .sharingMode = vk::SharingMode::eExclusive,
+                };
+                slot.buffer = vk::raii::Buffer{renderer.vk_context().device, buffer_ci};
 
-                    const vk::MemoryRequirements requirements = slot.buffer.getMemoryRequirements();
-                    vk::ExportMemoryAllocateInfo export_memory_ci{
-                        .handleTypes = memory_handle_type,
-                    };
-                    vk::MemoryAllocateInfo alloc_ci{
-                        .pNext           = &export_memory_ci,
-                        .allocationSize  = requirements.size,
-                        .memoryTypeIndex = vk::memory::find_memory_type(renderer.vk_context().physical_device, requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal),
-                    };
-                    slot.memory = vk::raii::DeviceMemory{renderer.vk_context().device, alloc_ci};
-                    slot.buffer.bindMemory(*slot.memory, 0);
+                const vk::MemoryRequirements requirements = slot.buffer.getMemoryRequirements();
+                vk::ExportMemoryAllocateInfo export_memory_ci{
+                    .handleTypes = memory_handle_type,
+                };
+                vk::MemoryAllocateInfo alloc_ci{
+                    .pNext           = &export_memory_ci,
+                    .allocationSize  = requirements.size,
+                    .memoryTypeIndex = vk::memory::find_memory_type(renderer.vk_context().physical_device, requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal),
+                };
+                slot.memory = vk::raii::DeviceMemory{renderer.vk_context().device, alloc_ci};
+                slot.buffer.bindMemory(*slot.memory, 0);
 
 #if defined(_WIN32)
-                    vk::MemoryGetWin32HandleInfoKHR handle_info{
-                        .memory     = *slot.memory,
-                        .handleType = memory_handle_type,
-                    };
-                    HANDLE memory_handle = renderer.vk_context().device.getMemoryWin32HandleKHR(handle_info);
-                    if (memory_handle == nullptr) throw std::runtime_error("getMemoryWin32HandleKHR returned a null handle");
+                vk::MemoryGetWin32HandleInfoKHR handle_info{
+                    .memory     = *slot.memory,
+                    .handleType = memory_handle_type,
+                };
+                HANDLE memory_handle = renderer.vk_context().device.getMemoryWin32HandleKHR(handle_info);
+                if (memory_handle == nullptr) throw std::runtime_error("getMemoryWin32HandleKHR returned a null handle");
 
-                    cudaExternalMemoryHandleDesc external_desc{};
-                    external_desc.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
-                    external_desc.handle.win32.handle = memory_handle;
-                    external_desc.size                = requirements.size;
-                    cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
-                    CloseHandle(memory_handle);
+                cudaExternalMemoryHandleDesc external_desc{};
+                external_desc.type                = cudaExternalMemoryHandleTypeOpaqueWin32;
+                external_desc.handle.win32.handle = memory_handle;
+                external_desc.size                = requirements.size;
+                cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
+                CloseHandle(memory_handle);
 
-                    vk::SemaphoreGetWin32HandleInfoKHR semaphore_handle_info{
-                        .semaphore  = *slot.timeline_semaphore,
-                        .handleType = semaphore_handle_type,
-                    };
-                    HANDLE semaphore_handle = renderer.vk_context().device.getSemaphoreWin32HandleKHR(semaphore_handle_info);
-                    if (semaphore_handle == nullptr) throw std::runtime_error("getSemaphoreWin32HandleKHR returned a null handle");
+                vk::SemaphoreGetWin32HandleInfoKHR semaphore_handle_info{
+                    .semaphore  = *slot.timeline_semaphore,
+                    .handleType = semaphore_handle_type,
+                };
+                HANDLE semaphore_handle = renderer.vk_context().device.getSemaphoreWin32HandleKHR(semaphore_handle_info);
+                if (semaphore_handle == nullptr) throw std::runtime_error("getSemaphoreWin32HandleKHR returned a null handle");
 
-                    cudaExternalSemaphoreHandleDesc external_semaphore_desc{};
-                    external_semaphore_desc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
-                    external_semaphore_desc.handle.win32.handle = semaphore_handle;
-                    cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
-                    CloseHandle(semaphore_handle);
+                cudaExternalSemaphoreHandleDesc external_semaphore_desc{};
+                external_semaphore_desc.type                = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
+                external_semaphore_desc.handle.win32.handle = semaphore_handle;
+                cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
+                CloseHandle(semaphore_handle);
 #else
-                    vk::MemoryGetFdInfoKHR handle_info{
-                        .memory     = *slot.memory,
-                        .handleType = memory_handle_type,
-                    };
-                    const int memory_fd = renderer.vk_context().device.getMemoryFdKHR(handle_info);
-                    if (memory_fd < 0) throw std::runtime_error("getMemoryFdKHR returned an invalid fd");
+                vk::MemoryGetFdInfoKHR handle_info{
+                    .memory     = *slot.memory,
+                    .handleType = memory_handle_type,
+                };
+                const int memory_fd = renderer.vk_context().device.getMemoryFdKHR(handle_info);
+                if (memory_fd < 0) throw std::runtime_error("getMemoryFdKHR returned an invalid fd");
 
-                    cudaExternalMemoryHandleDesc external_desc{};
-                    external_desc.type      = cudaExternalMemoryHandleTypeOpaqueFd;
-                    external_desc.handle.fd = memory_fd;
-                    external_desc.size      = requirements.size;
-                    cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
+                cudaExternalMemoryHandleDesc external_desc{};
+                external_desc.type      = cudaExternalMemoryHandleTypeOpaqueFd;
+                external_desc.handle.fd = memory_fd;
+                external_desc.size      = requirements.size;
+                cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
 
-                    vk::SemaphoreGetFdInfoKHR semaphore_handle_info{
-                        .semaphore  = *slot.timeline_semaphore,
-                        .handleType = semaphore_handle_type,
-                    };
-                    const int semaphore_fd = renderer.vk_context().device.getSemaphoreFdKHR(semaphore_handle_info);
-                    if (semaphore_fd < 0) throw std::runtime_error("getSemaphoreFdKHR returned an invalid fd");
+                vk::SemaphoreGetFdInfoKHR semaphore_handle_info{
+                    .semaphore  = *slot.timeline_semaphore,
+                    .handleType = semaphore_handle_type,
+                };
+                const int semaphore_fd = renderer.vk_context().device.getSemaphoreFdKHR(semaphore_handle_info);
+                if (semaphore_fd < 0) throw std::runtime_error("getSemaphoreFdKHR returned an invalid fd");
 
-                    cudaExternalSemaphoreHandleDesc external_semaphore_desc{};
-                    external_semaphore_desc.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
-                    external_semaphore_desc.handle.fd = semaphore_fd;
-                    cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
+                cudaExternalSemaphoreHandleDesc external_semaphore_desc{};
+                external_semaphore_desc.type      = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+                external_semaphore_desc.handle.fd = semaphore_fd;
+                cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
 #endif
 
-                    cudaExternalMemoryBufferDesc buffer_desc{};
-                    buffer_desc.offset = 0;
-                    buffer_desc.size   = viewer_runtime.field_bytes;
-                    cuda_ok(cudaExternalMemoryGetMappedBuffer(&slot.cuda_ptr, slot.external_memory, &buffer_desc), "cudaExternalMemoryGetMappedBuffer");
-                } else {
-                    vk::BufferCreateInfo buffer_ci{
-                        .size        = viewer_runtime.field_bytes,
-                        .usage       = vk::BufferUsageFlagBits::eStorageBuffer,
-                        .sharingMode = vk::SharingMode::eExclusive,
-                    };
-                    slot.buffer = vk::raii::Buffer{renderer.vk_context().device, buffer_ci};
-                    const vk::MemoryRequirements requirements = slot.buffer.getMemoryRequirements();
-                    vk::MemoryAllocateInfo alloc_ci{
-                        .allocationSize  = requirements.size,
-                        .memoryTypeIndex = vk::memory::find_memory_type(renderer.vk_context().physical_device, requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent),
-                    };
-                    slot.memory = vk::raii::DeviceMemory{renderer.vk_context().device, alloc_ci};
-                    slot.buffer.bindMemory(*slot.memory, 0);
-                    slot.mapped_ptr = slot.memory.mapMemory(0, requirements.size);
-                }
+                cudaExternalMemoryBufferDesc buffer_desc{};
+                buffer_desc.offset = 0;
+                buffer_desc.size   = viewer_runtime.field_bytes;
+                cuda_ok(cudaExternalMemoryGetMappedBuffer(&slot.cuda_ptr, slot.external_memory, &buffer_desc), "cudaExternalMemoryGetMappedBuffer");
 
                 vk::DescriptorBufferInfo field_info{
                     .buffer = *slot.buffer,
@@ -825,86 +628,32 @@ int main() {
             auto& slot        = snapshot_slots.at(static_cast<size_t>(slot_index));
             const auto& field = current_field();
             const auto grid   = current_grid();
-            auto copy_host_snapshot = [&](const void* source, const char* what) {
-                if (slot.mapped_ptr == nullptr) throw std::runtime_error(std::string(what) + ": mapped snapshot buffer is null");
-                std::memcpy(slot.mapped_ptr, source, static_cast<size_t>(viewer_runtime.field_bytes));
-            };
 
             if (backend_kind == BackendKind::StableFluids001) {
-                if (execution_backend == ExecutionBackend::Cuda) {
-                    if (field.id == FieldId::Density) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, stable_runtime.sim_stream), "cudaMemcpyAsync stable density snapshot");
-                    } else {
-                        stable_ok(app_compute_staggered_velocity_magnitude_async(
-                                      slot.cuda_ptr, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
-                            "app_compute_staggered_velocity_magnitude_async");
-                    }
+                if (field.id == FieldId::Density) {
+                    cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, stable_runtime.sim_stream), "cudaMemcpyAsync stable density snapshot");
                 } else {
-                    if (field.id == FieldId::Density) {
-                        copy_host_snapshot(stable_runtime.density, "stable density host snapshot");
-                    } else {
-                        auto stable_index = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
-                        for (uint32_t z = 0; z < grid.nz; ++z)
-                            for (uint32_t y = 0; y < grid.ny; ++y)
-                                for (uint32_t x = 0; x < grid.nx; ++x) {
-                                    const float vx = 0.5f
-                                                   * (stable_runtime.velocity_x[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx) + 1, static_cast<int>(grid.ny))]
-                                                       + stable_runtime.velocity_x[stable_index(static_cast<int>(x) + 1, static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx) + 1, static_cast<int>(grid.ny))]);
-                                    const float vy = 0.5f
-                                                   * (stable_runtime.velocity_y[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny) + 1)]
-                                                       + stable_runtime.velocity_y[stable_index(static_cast<int>(x), static_cast<int>(y) + 1, static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny) + 1)]);
-                                    const float vz = 0.5f
-                                                   * (stable_runtime.velocity_z[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))]
-                                                       + stable_runtime.velocity_z[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z) + 1, static_cast<int>(grid.nx), static_cast<int>(grid.ny))]);
-                                    stable_runtime.temporary_density[stable_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))] = std::sqrt(vx * vx + vy * vy + vz * vz);
-                                }
-                        copy_host_snapshot(stable_runtime.temporary_density, "stable velocity magnitude host snapshot");
-                    }
+                    stable_ok(app_compute_staggered_velocity_magnitude_async(
+                                  slot.cuda_ptr, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
+                        "app_compute_staggered_velocity_magnitude_async");
                 }
             } else {
-                if (execution_backend == ExecutionBackend::Cuda) {
-                    if (field.id == FieldId::Density) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.density, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual density snapshot");
-                    } else if (field.id == FieldId::Temperature) {
-                        cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temperature, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual temperature snapshot");
-                    } else {
-                        smoke_ok(app_compute_staggered_velocity_magnitude_async(
-                                     slot.cuda_ptr, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
-                            "app_compute_staggered_velocity_magnitude_async");
-                    }
+                if (field.id == FieldId::Density) {
+                    cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.density, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual density snapshot");
+                } else if (field.id == FieldId::Temperature) {
+                    cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temperature, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual temperature snapshot");
                 } else {
-                    auto visual_index = [](const int x, const int y, const int z, const int sx, const int sy) { return static_cast<size_t>(z) * static_cast<size_t>(sx) * static_cast<size_t>(sy) + static_cast<size_t>(y) * static_cast<size_t>(sx) + static_cast<size_t>(x); };
-                    if (field.id == FieldId::Density) {
-                        copy_host_snapshot(visual_runtime.density, "visual density host snapshot");
-                    } else if (field.id == FieldId::Temperature) {
-                        copy_host_snapshot(visual_runtime.temperature, "visual temperature host snapshot");
-                    } else {
-                        for (uint32_t z = 0; z < grid.nz; ++z)
-                            for (uint32_t y = 0; y < grid.ny; ++y)
-                                for (uint32_t x = 0; x < grid.nx; ++x) {
-                                    const float vx = 0.5f
-                                                   * (visual_runtime.velocity_x[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx) + 1, static_cast<int>(grid.ny))]
-                                                       + visual_runtime.velocity_x[visual_index(static_cast<int>(x) + 1, static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx) + 1, static_cast<int>(grid.ny))]);
-                                    const float vy = 0.5f
-                                                   * (visual_runtime.velocity_y[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny) + 1)]
-                                                       + visual_runtime.velocity_y[visual_index(static_cast<int>(x), static_cast<int>(y) + 1, static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny) + 1)]);
-                                    const float vz = 0.5f
-                                                   * (visual_runtime.velocity_z[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))]
-                                                       + visual_runtime.velocity_z[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z) + 1, static_cast<int>(grid.nx), static_cast<int>(grid.ny))]);
-                                    visual_runtime.temporary_pressure[visual_index(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), static_cast<int>(grid.nx), static_cast<int>(grid.ny))] = std::sqrt(vx * vx + vy * vy + vz * vz);
-                                }
-                        copy_host_snapshot(visual_runtime.temporary_pressure, "visual velocity magnitude host snapshot");
-                    }
+                    smoke_ok(app_compute_staggered_velocity_magnitude_async(
+                                 slot.cuda_ptr, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
+                        "app_compute_staggered_velocity_magnitude_async");
                 }
             }
 
             const uint64_t next_generation = viewer_runtime.snapshot_generation + 1;
-            if (execution_backend == ExecutionBackend::Cuda) {
-                cudaExternalSemaphoreSignalParams signal_params{};
-                signal_params.params.fence.value = next_generation;
-                cuda_ok(cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, current_stream()), "cudaSignalExternalSemaphoresAsync snapshot");
-                cuda_ok(cudaStreamSynchronize(current_stream()), "cudaStreamSynchronize snapshot");
-            }
+            cudaExternalSemaphoreSignalParams signal_params{};
+            signal_params.params.fence.value = next_generation;
+            cuda_ok(cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, current_stream()), "cudaSignalExternalSemaphoresAsync snapshot");
+            cuda_ok(cudaStreamSynchronize(current_stream()), "cudaStreamSynchronize snapshot");
             slot.ready_generation               = next_generation;
             viewer_runtime.snapshot_generation  = next_generation;
             viewer_runtime.active_snapshot_slot = slot_index;
@@ -923,16 +672,14 @@ int main() {
         auto reset_backend = [&]() {
             nvtx3::scoped_range range{"smoke_app.reset_backend"};
 
-            if (execution_backend == ExecutionBackend::Cuda) {
-                const auto timeline_features = renderer.vk_context().physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
-                if (!timeline_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("smoke-visualizer requires Vulkan timeline semaphore support for CUDA execution");
+            const auto timeline_features = renderer.vk_context().physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>();
+            if (!timeline_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("smoke-visualizer requires Vulkan timeline semaphore support");
 
-                int cuda_device_index = 0;
-                cuda_ok(cudaGetDevice(&cuda_device_index), "cudaGetDevice");
-                int cuda_timeline_semaphore_interop_supported = 0;
-                cuda_ok(cudaDeviceGetAttribute(&cuda_timeline_semaphore_interop_supported, cudaDevAttrTimelineSemaphoreInteropSupported, cuda_device_index), "cudaDeviceGetAttribute cudaDevAttrTimelineSemaphoreInteropSupported");
-                if (cuda_timeline_semaphore_interop_supported == 0) throw std::runtime_error("smoke-visualizer requires CUDA timeline semaphore interop support for CUDA execution");
-            }
+            int cuda_device_index = 0;
+            cuda_ok(cudaGetDevice(&cuda_device_index), "cudaGetDevice");
+            int cuda_timeline_semaphore_interop_supported = 0;
+            cuda_ok(cudaDeviceGetAttribute(&cuda_timeline_semaphore_interop_supported, cudaDevAttrTimelineSemaphoreInteropSupported, cuda_device_index), "cudaDeviceGetAttribute cudaDevAttrTimelineSemaphoreInteropSupported");
+            if (cuda_timeline_semaphore_interop_supported == 0) throw std::runtime_error("smoke-visualizer requires CUDA timeline semaphore interop support");
 
             destroy_everything();
             current_solver_stats() = {};
@@ -942,150 +689,64 @@ int main() {
                 const auto stable_velocity_x_bytes = velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 const auto stable_velocity_y_bytes = velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 const auto stable_velocity_z_bytes = velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
-                if (execution_backend == ExecutionBackend::Cuda) {
-                    stable_runtime.device_allocated = true;
-                    cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), viewer_runtime.field_bytes), "cudaMalloc stable density");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), stable_velocity_x_bytes), "cudaMalloc stable velocity_x");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), stable_velocity_y_bytes), "cudaMalloc stable velocity_y");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), stable_velocity_z_bytes), "cudaMalloc stable velocity_z");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_density), viewer_runtime.field_bytes), "cudaMalloc stable temporary_density");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_velocity_x");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_velocity_y");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_velocity_z");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_density), viewer_runtime.field_bytes), "cudaMalloc stable temporary_previous_density");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_previous_velocity_x");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_previous_velocity_y");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_previous_velocity_z");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc stable temporary_pressure");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc stable temporary_divergence");
-                } else {
-                    stable_runtime.device_allocated = false;
-                    stable_runtime.host_density.resize(scalar_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_velocity_x.resize(velocity_x_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_velocity_y.resize(velocity_y_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_velocity_z.resize(velocity_z_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_density.resize(scalar_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_velocity_x.resize(velocity_x_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_velocity_y.resize(velocity_y_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_velocity_z.resize(velocity_z_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_previous_density.resize(scalar_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_previous_velocity_x.resize(velocity_x_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_previous_velocity_y.resize(velocity_y_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_previous_velocity_z.resize(velocity_z_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_pressure.resize(scalar_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.host_temporary_divergence.resize(scalar_elements(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz));
-                    stable_runtime.density                       = stable_runtime.host_density.data();
-                    stable_runtime.velocity_x                    = stable_runtime.host_velocity_x.data();
-                    stable_runtime.velocity_y                    = stable_runtime.host_velocity_y.data();
-                    stable_runtime.velocity_z                    = stable_runtime.host_velocity_z.data();
-                    stable_runtime.temporary_density             = stable_runtime.host_temporary_density.data();
-                    stable_runtime.temporary_velocity_x          = stable_runtime.host_temporary_velocity_x.data();
-                    stable_runtime.temporary_velocity_y          = stable_runtime.host_temporary_velocity_y.data();
-                    stable_runtime.temporary_velocity_z          = stable_runtime.host_temporary_velocity_z.data();
-                    stable_runtime.temporary_previous_density    = stable_runtime.host_temporary_previous_density.data();
-                    stable_runtime.temporary_previous_velocity_x = stable_runtime.host_temporary_previous_velocity_x.data();
-                    stable_runtime.temporary_previous_velocity_y = stable_runtime.host_temporary_previous_velocity_y.data();
-                    stable_runtime.temporary_previous_velocity_z = stable_runtime.host_temporary_previous_velocity_z.data();
-                    stable_runtime.temporary_pressure            = stable_runtime.host_temporary_pressure.data();
-                    stable_runtime.temporary_divergence          = stable_runtime.host_temporary_divergence.data();
-                }
+                stable_runtime.device_allocated = true;
+                cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), viewer_runtime.field_bytes), "cudaMalloc stable density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), stable_velocity_x_bytes), "cudaMalloc stable velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), stable_velocity_y_bytes), "cudaMalloc stable velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), stable_velocity_z_bytes), "cudaMalloc stable velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_density), viewer_runtime.field_bytes), "cudaMalloc stable temporary_density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_density), viewer_runtime.field_bytes), "cudaMalloc stable temporary_previous_density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_previous_velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_previous_velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_previous_velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc stable temporary_pressure");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc stable temporary_divergence");
             } else {
                 viewer_runtime.field_bytes         = scalar_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_x_bytes = velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_y_bytes = velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_z_bytes = velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
-                if (execution_backend == ExecutionBackend::Cuda) {
-                    visual_runtime.device_allocated = true;
-                    cuda_ok(cudaStreamCreateWithFlags(&visual_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags visual_stream");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.density), viewer_runtime.field_bytes), "cudaMalloc visual density");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temperature), viewer_runtime.field_bytes), "cudaMalloc visual temperature");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_x), visual_velocity_x_bytes), "cudaMalloc visual velocity_x");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_y), visual_velocity_y_bytes), "cudaMalloc visual velocity_y");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_z), visual_velocity_z_bytes), "cudaMalloc visual velocity_z");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_density), viewer_runtime.field_bytes), "cudaMalloc visual temporary_previous_density");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_temperature), viewer_runtime.field_bytes), "cudaMalloc visual temporary_previous_temperature");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_x), visual_velocity_x_bytes), "cudaMalloc visual temporary_previous_velocity_x");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_y), visual_velocity_y_bytes), "cudaMalloc visual temporary_previous_velocity_y");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_z), visual_velocity_z_bytes), "cudaMalloc visual temporary_previous_velocity_z");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc visual temporary_pressure");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc visual temporary_divergence");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_x), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_x");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_y), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_y");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_z), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_z");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_magnitude), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_magnitude");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_x), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_x");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_y), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_y");
-                    cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_z), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_z");
-                } else {
-                    visual_runtime.device_allocated = false;
-                    visual_runtime.host_density.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temperature.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_velocity_x.resize(velocity_x_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_velocity_y.resize(velocity_y_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_velocity_z.resize(velocity_z_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_previous_density.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_previous_temperature.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_previous_velocity_x.resize(velocity_x_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_previous_velocity_y.resize(velocity_y_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_previous_velocity_z.resize(velocity_z_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_pressure.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_divergence.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_omega_x.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_omega_y.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_omega_z.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_omega_magnitude.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_force_x.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_force_y.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.host_temporary_force_z.resize(scalar_elements(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz));
-                    visual_runtime.density                        = visual_runtime.host_density.data();
-                    visual_runtime.temperature                    = visual_runtime.host_temperature.data();
-                    visual_runtime.velocity_x                     = visual_runtime.host_velocity_x.data();
-                    visual_runtime.velocity_y                     = visual_runtime.host_velocity_y.data();
-                    visual_runtime.velocity_z                     = visual_runtime.host_velocity_z.data();
-                    visual_runtime.temporary_previous_density     = visual_runtime.host_temporary_previous_density.data();
-                    visual_runtime.temporary_previous_temperature = visual_runtime.host_temporary_previous_temperature.data();
-                    visual_runtime.temporary_previous_velocity_x  = visual_runtime.host_temporary_previous_velocity_x.data();
-                    visual_runtime.temporary_previous_velocity_y  = visual_runtime.host_temporary_previous_velocity_y.data();
-                    visual_runtime.temporary_previous_velocity_z  = visual_runtime.host_temporary_previous_velocity_z.data();
-                    visual_runtime.temporary_pressure             = visual_runtime.host_temporary_pressure.data();
-                    visual_runtime.temporary_divergence           = visual_runtime.host_temporary_divergence.data();
-                    visual_runtime.temporary_omega_x              = visual_runtime.host_temporary_omega_x.data();
-                    visual_runtime.temporary_omega_y              = visual_runtime.host_temporary_omega_y.data();
-                    visual_runtime.temporary_omega_z              = visual_runtime.host_temporary_omega_z.data();
-                    visual_runtime.temporary_omega_magnitude      = visual_runtime.host_temporary_omega_magnitude.data();
-                    visual_runtime.temporary_force_x              = visual_runtime.host_temporary_force_x.data();
-                    visual_runtime.temporary_force_y              = visual_runtime.host_temporary_force_y.data();
-                    visual_runtime.temporary_force_z              = visual_runtime.host_temporary_force_z.data();
-                }
+                visual_runtime.device_allocated = true;
+                cuda_ok(cudaStreamCreateWithFlags(&visual_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags visual_stream");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.density), viewer_runtime.field_bytes), "cudaMalloc visual density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temperature), viewer_runtime.field_bytes), "cudaMalloc visual temperature");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_x), visual_velocity_x_bytes), "cudaMalloc visual velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_y), visual_velocity_y_bytes), "cudaMalloc visual velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_z), visual_velocity_z_bytes), "cudaMalloc visual velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_density), viewer_runtime.field_bytes), "cudaMalloc visual temporary_previous_density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_temperature), viewer_runtime.field_bytes), "cudaMalloc visual temporary_previous_temperature");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_x), visual_velocity_x_bytes), "cudaMalloc visual temporary_previous_velocity_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_y), visual_velocity_y_bytes), "cudaMalloc visual temporary_previous_velocity_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_z), visual_velocity_z_bytes), "cudaMalloc visual temporary_previous_velocity_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc visual temporary_pressure");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc visual temporary_divergence");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_x), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_y), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_z), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_magnitude), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_magnitude");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_x), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_y), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_z), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_z");
             }
 
             create_snapshot_slots();
 
             if (backend_kind == BackendKind::StableFluids001) {
-                if (execution_backend == ExecutionBackend::Cuda) {
-                    cuda_ok(cudaMemsetAsync(stable_runtime.density, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable density");
-                    cuda_ok(cudaMemsetAsync(stable_runtime.velocity_x, 0, velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_x");
-                    cuda_ok(cudaMemsetAsync(stable_runtime.velocity_y, 0, velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_y");
-                    cuda_ok(cudaMemsetAsync(stable_runtime.velocity_z, 0, velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_z");
-                } else {
-                    std::fill(stable_runtime.host_density.begin(), stable_runtime.host_density.end(), 0.0f);
-                    std::fill(stable_runtime.host_velocity_x.begin(), stable_runtime.host_velocity_x.end(), 0.0f);
-                    std::fill(stable_runtime.host_velocity_y.begin(), stable_runtime.host_velocity_y.end(), 0.0f);
-                    std::fill(stable_runtime.host_velocity_z.begin(), stable_runtime.host_velocity_z.end(), 0.0f);
-                }
+                cuda_ok(cudaMemsetAsync(stable_runtime.density, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable density");
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_x, 0, velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_x");
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_y, 0, velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_y");
+                cuda_ok(cudaMemsetAsync(stable_runtime.velocity_z, 0, velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_z");
                 if (stable_settings.emit_source) {
                     const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                     const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                     const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                    if (execution_backend == ExecutionBackend::Cuda) {
-                        stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
-                                      stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
-                            "app_add_stable_source_async");
-                    } else {
-                        add_stable_source_host(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.velocity_x,
-                            stable_settings.velocity_y, stable_settings.velocity_z);
-                    }
+                    stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
+                                  stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
+                        "app_add_stable_source_async");
                     StableFluidsStepDesc step_desc{};
                     step_desc.struct_size                   = sizeof(StableFluidsStepDesc);
                     step_desc.api_version                   = 1;
@@ -1121,39 +782,23 @@ int main() {
                     step_desc.block_x                       = stable_settings.desc.block_x;
                     step_desc.block_y                       = stable_settings.desc.block_y;
                     step_desc.block_z                       = stable_settings.desc.block_z;
-                    step_desc.stream                        = execution_backend == ExecutionBackend::Cuda ? stable_runtime.sim_stream : nullptr;
+                    step_desc.stream                        = stable_runtime.sim_stream;
                     stable_ok(stable_fluids_validate_desc(&step_desc), "stable_fluids_validate_desc");
-                    if (execution_backend == ExecutionBackend::Cuda)
-                        stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
-                    else
-                        stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
+                    stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
                 }
             } else {
-                if (execution_backend == ExecutionBackend::Cuda) {
-                    cuda_ok(cudaMemsetAsync(visual_runtime.density, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual density");
-                    cuda_ok(cudaMemsetAsync(visual_runtime.temperature, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual temperature");
-                    cuda_ok(cudaMemsetAsync(visual_runtime.velocity_x, 0, velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_x");
-                    cuda_ok(cudaMemsetAsync(visual_runtime.velocity_y, 0, velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_y");
-                    cuda_ok(cudaMemsetAsync(visual_runtime.velocity_z, 0, velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_z");
-                } else {
-                    std::fill(visual_runtime.host_density.begin(), visual_runtime.host_density.end(), 0.0f);
-                    std::fill(visual_runtime.host_temperature.begin(), visual_runtime.host_temperature.end(), 0.0f);
-                    std::fill(visual_runtime.host_velocity_x.begin(), visual_runtime.host_velocity_x.end(), 0.0f);
-                    std::fill(visual_runtime.host_velocity_y.begin(), visual_runtime.host_velocity_y.end(), 0.0f);
-                    std::fill(visual_runtime.host_velocity_z.begin(), visual_runtime.host_velocity_z.end(), 0.0f);
-                }
+                cuda_ok(cudaMemsetAsync(visual_runtime.density, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual density");
+                cuda_ok(cudaMemsetAsync(visual_runtime.temperature, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual temperature");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_x, 0, velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_x");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_y, 0, velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_y");
+                cuda_ok(cudaMemsetAsync(visual_runtime.velocity_z, 0, velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_z");
                 if (visual_settings.emit_source) {
                     const float center_x = visual_settings.source_u * static_cast<float>(visual_settings.desc.nx);
                     const float center_y = visual_settings.source_v * static_cast<float>(visual_settings.desc.ny);
                     const float center_z = visual_settings.source_w * static_cast<float>(visual_settings.desc.nz);
-                    if (execution_backend == ExecutionBackend::Cuda) {
-                        smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
-                                     visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
-                            "app_add_visual_source_async");
-                    } else {
-                        add_visual_source_host(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius, visual_settings.density_amount,
-                            visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z);
-                    }
+                    smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
+                                 visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
+                        "app_add_visual_source_async");
                     VisualSimulationOfSmokeStepDesc step_desc{};
                     step_desc.struct_size                    = sizeof(VisualSimulationOfSmokeStepDesc);
                     step_desc.api_version                    = 1;
@@ -1190,12 +835,9 @@ int main() {
                     step_desc.block_x                        = visual_settings.desc.block_x;
                     step_desc.block_y                        = visual_settings.desc.block_y;
                     step_desc.block_z                        = visual_settings.desc.block_z;
-                    step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? visual_runtime.sim_stream : nullptr;
+                    step_desc.stream                         = visual_runtime.sim_stream;
                     smoke_ok(visual_simulation_of_smoke_validate_desc(&step_desc), "visual_simulation_of_smoke_validate_desc");
-                    if (execution_backend == ExecutionBackend::Cuda)
-                        smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
-                    else
-                        smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
+                    smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
                 }
             }
 
@@ -1228,14 +870,6 @@ int main() {
                 reset_requested = true;
                 field_changed   = true;
             }
-            int execution_backend_index            = static_cast<int>(execution_backend);
-            const char* execution_backend_labels[] = {
-                "Parallel",
-                "CUDA",
-            };
-            if (ImGui::Combo("Execution", &execution_backend_index, execution_backend_labels, 2)) reset_requested = true;
-            execution_backend = static_cast<ExecutionBackend>(execution_backend_index);
-
             const auto fields    = current_fields();
             auto& selected_field = current_field_index();
             selected_field       = std::clamp(selected_field, 0, static_cast<int>(fields.size()) - 1);
@@ -1313,7 +947,7 @@ int main() {
                 ImGui::Text("Avg step call: %.3f ms", solver_stats.average_step_call_ms);
                 ImGui::Text("Last snapshot: %.3f ms", solver_stats.last_snapshot_ms);
                 ImGui::Text("Avg snapshot: %.3f ms", solver_stats.average_snapshot_ms);
-                if (execution_backend == ExecutionBackend::Cuda) ImGui::TextUnformatted("CUDA timings are app-side call costs, not kernel profiler numbers.");
+                ImGui::TextUnformatted("CUDA timings are app-side call costs, not kernel profiler numbers.");
                 ImGui::Separator();
             }
 
@@ -1411,14 +1045,9 @@ int main() {
                                 const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                                 const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                                 const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                                if (execution_backend == ExecutionBackend::Cuda) {
-                                    stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
-                                                  stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
-                                        "app_add_stable_source_async");
-                                } else {
-                                    add_stable_source_host(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.velocity_x,
-                                        stable_settings.velocity_y, stable_settings.velocity_z);
-                                }
+                                stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
+                                              stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
+                                    "app_add_stable_source_async");
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};
@@ -1457,13 +1086,10 @@ int main() {
                                 step_desc.block_x                       = stable_settings.desc.block_x;
                                 step_desc.block_y                       = stable_settings.desc.block_y;
                                 step_desc.block_z                       = stable_settings.desc.block_z;
-                                step_desc.stream                        = execution_backend == ExecutionBackend::Cuda ? stable_runtime.sim_stream : nullptr;
+                                step_desc.stream                        = stable_runtime.sim_stream;
                                 stable_ok(stable_fluids_validate_desc(&step_desc), "stable_fluids_validate_desc");
                                 const auto begin = std::chrono::steady_clock::now();
-                                if (execution_backend == ExecutionBackend::Cuda)
-                                    stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
-                                else
-                                    stable_ok(stable_fluids_step_parallel(&step_desc), "stable_fluids_step_parallel");
+                                stable_ok(stable_fluids_step_cuda(&step_desc), "stable_fluids_step_cuda");
                                 const auto elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
                                 accumulate_sample(elapsed_ms, stable_solver_stats.last_step_call_ms, stable_solver_stats.average_step_call_ms, stable_solver_stats.step_count);
                             }
@@ -1473,14 +1099,9 @@ int main() {
                                 const float center_x = visual_settings.source_u * static_cast<float>(visual_settings.desc.nx);
                                 const float center_y = visual_settings.source_v * static_cast<float>(visual_settings.desc.ny);
                                 const float center_z = visual_settings.source_w * static_cast<float>(visual_settings.desc.nz);
-                                if (execution_backend == ExecutionBackend::Cuda) {
-                                    smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
-                                                 visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
-                                        "app_add_visual_source_async");
-                                } else {
-                                    add_visual_source_host(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius, visual_settings.density_amount,
-                                        visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z);
-                                }
+                                smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
+                                             visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
+                                    "app_add_visual_source_async");
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};
@@ -1520,13 +1141,10 @@ int main() {
                                 step_desc.block_x                        = visual_settings.desc.block_x;
                                 step_desc.block_y                        = visual_settings.desc.block_y;
                                 step_desc.block_z                        = visual_settings.desc.block_z;
-                                step_desc.stream                         = execution_backend == ExecutionBackend::Cuda ? visual_runtime.sim_stream : nullptr;
+                                step_desc.stream                         = visual_runtime.sim_stream;
                                 smoke_ok(visual_simulation_of_smoke_validate_desc(&step_desc), "visual_simulation_of_smoke_validate_desc");
                                 const auto begin = std::chrono::steady_clock::now();
-                                if (execution_backend == ExecutionBackend::Cuda)
-                                    smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
-                                else
-                                    smoke_ok(visual_simulation_of_smoke_step_parallel(&step_desc), "visual_simulation_of_smoke_step_parallel");
+                                smoke_ok(visual_simulation_of_smoke_step_cuda(&step_desc), "visual_simulation_of_smoke_step_cuda");
                                 const auto elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
                                 accumulate_sample(elapsed_ms, visual_solver_stats.last_step_call_ms, visual_solver_stats.average_step_call_ms, visual_solver_stats.step_count);
                             }
