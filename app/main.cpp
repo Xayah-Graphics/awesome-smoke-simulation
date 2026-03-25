@@ -199,20 +199,10 @@ int main() {
         auto velocity_x_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
         auto velocity_y_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
         auto velocity_z_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
-        auto current_fields   = [&]() -> std::span<const FieldChoice> { return stable_fields; };
-
-        auto current_field_index = [&]() -> int& { return stable_settings.selected_field; };
-
         auto current_field = [&]() -> const FieldChoice& {
-            auto fields    = current_fields();
-            auto& selected = current_field_index();
-            selected       = std::clamp(selected, 0, static_cast<int>(fields.size()) - 1);
-            return fields[static_cast<size_t>(selected)];
+            stable_settings.selected_field = std::clamp(stable_settings.selected_field, 0, static_cast<int>(stable_fields.size()) - 1);
+            return stable_fields[static_cast<size_t>(stable_settings.selected_field)];
         };
-
-        auto current_stream = [&]() -> cudaStream_t { return stable_runtime.sim_stream; };
-
-        auto current_solver_stats = [&]() -> SolverStats& { return stable_solver_stats; };
         auto accumulate_sample    = [](const double sample_ms, double& last_ms, double& average_ms, uint64_t& count) {
             last_ms = sample_ms;
             ++count;
@@ -916,8 +906,8 @@ int main() {
             const uint64_t next_generation = viewer_runtime.snapshot_generation + 1;
             cudaExternalSemaphoreSignalParams signal_params{};
             signal_params.params.fence.value = next_generation;
-            cuda_ok(cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, current_stream()), "cudaSignalExternalSemaphoresAsync snapshot");
-            cuda_ok(cudaStreamSynchronize(current_stream()), "cudaStreamSynchronize snapshot");
+            cuda_ok(cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, stable_runtime.sim_stream), "cudaSignalExternalSemaphoresAsync snapshot");
+            cuda_ok(cudaStreamSynchronize(stable_runtime.sim_stream), "cudaStreamSynchronize snapshot");
             slot.ready_generation               = next_generation;
             viewer_runtime.snapshot_generation  = next_generation;
             viewer_runtime.active_snapshot_slot = slot_index;
@@ -929,7 +919,7 @@ int main() {
             slot.semantic                       = field.semantic;
             slot.label                          = field.label;
             const auto elapsed_ms               = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
-            auto& solver_stats                  = current_solver_stats();
+            auto& solver_stats                  = stable_solver_stats;
             accumulate_sample(elapsed_ms, solver_stats.last_snapshot_ms, solver_stats.average_snapshot_ms, solver_stats.snapshot_count);
         };
 
@@ -946,7 +936,7 @@ int main() {
             if (cuda_timeline_semaphore_interop_supported == 0) throw std::runtime_error("smoke-visualizer requires CUDA timeline semaphore interop support");
 
             destroy_everything();
-            current_solver_stats() = {};
+            stable_solver_stats = {};
 
             viewer_runtime.field_bytes         = rgba_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
             const auto stable_scalar_bytes     = scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
@@ -994,7 +984,7 @@ int main() {
             }
 
             snapshot_current_field_to_slot(0, "smoke_app.reset_backend.initial_snapshot");
-            current_solver_stats() = {};
+            stable_solver_stats = {};
             apply_field_defaults(current_field());
             if (const auto field = active_snapshot()) {
                 renderer.frame_volume(*field);
@@ -1012,8 +1002,8 @@ int main() {
             bool field_changed   = false;
 
             ImGui::Begin("Simulation");
-            const auto fields    = current_fields();
-            auto& selected_field = current_field_index();
+            const auto fields    = std::span<const FieldChoice>(stable_fields);
+            auto& selected_field = stable_settings.selected_field;
             selected_field       = std::clamp(selected_field, 0, static_cast<int>(fields.size()) - 1);
             if (ImGui::BeginCombo("Field", fields[static_cast<size_t>(selected_field)].label.data())) {
                 for (int i = 0; i < static_cast<int>(fields.size()); ++i) {
@@ -1051,7 +1041,7 @@ int main() {
                     }
                     return std::array<int32_t, 4>{levels, nx, ny, nz};
                 };
-                const auto& solver_stats = current_solver_stats();
+                const auto& solver_stats = stable_solver_stats;
                 ImGui::TextUnformatted("Solver");
                 const auto hierarchy            = count_levels(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 const int pressure_v_cycles     = std::max(1, stable_settings.desc.pressure_iterations / 40);

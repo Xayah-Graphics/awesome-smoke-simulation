@@ -258,8 +258,8 @@ namespace app {
                 static_cast<float>(field->nz) * field->cell_size,
                 0.0f,
             };
-            push.color_a = {render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
-            push.color_b = {render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
+            push.color_a = render_.mode == RenderMode::Smoke ? vk::math::vec4{} : vk::math::vec4{render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
+            push.color_b = render_.mode == RenderMode::Smoke ? vk::math::vec4{} : vk::math::vec4{render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
             push.params0 = {
                 static_cast<float>(sc_.extent.width) / static_cast<float>((std::max) (sc_.extent.height, 1u)),
                 half_fov_tan,

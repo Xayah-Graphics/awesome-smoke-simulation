@@ -19,10 +19,9 @@ export namespace app {
 
     enum class FieldSemantic : uint32_t {
         Density           = 0,
-        Temperature       = 1,
-        VelocityMagnitude = 2,
-        DyeColor          = 3,
-        GenericScalar     = 4,
+        VelocityMagnitude = 1,
+        DyeColor          = 2,
+        GenericScalar     = 3,
     };
 
     enum class RenderMode : uint32_t {
