@@ -56,9 +56,11 @@ namespace {
         FieldChoice{FieldId::VelocityMagnitude, "Velocity Magnitude", app::FieldSemantic::VelocityMagnitude},
     };
 
-    constexpr std::array stable_boundary_labels{
-        "Fixed",
-        "Periodic",
+    constexpr std::array boundary_labels{
+        "No-slip",
+        "Free-slip",
+        "Inflow",
+        "Outflow",
     };
 
     constexpr std::array visual_fields{
@@ -112,12 +114,24 @@ namespace {
         float diffusion             = 0.00005f;
         int32_t diffuse_iterations  = 24;
         int32_t pressure_iterations = 80;
-        uint32_t boundary_x_min     = STABLE_FLUIDS_BOUNDARY_FIXED;
-        uint32_t boundary_x_max     = STABLE_FLUIDS_BOUNDARY_FIXED;
-        uint32_t boundary_y_min     = STABLE_FLUIDS_BOUNDARY_FIXED;
-        uint32_t boundary_y_max     = STABLE_FLUIDS_BOUNDARY_FIXED;
-        uint32_t boundary_z_min     = STABLE_FLUIDS_BOUNDARY_FIXED;
-        uint32_t boundary_z_max     = STABLE_FLUIDS_BOUNDARY_FIXED;
+        uint32_t boundary_x_min     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
+        uint32_t boundary_x_max     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
+        uint32_t boundary_y_min     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
+        uint32_t boundary_y_max     = STABLE_FLUIDS_BOUNDARY_OUTFLOW;
+        uint32_t boundary_z_min     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
+        uint32_t boundary_z_max     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
+        float inflow_velocity_x_min = 0.0f;
+        float inflow_velocity_x_max = 0.0f;
+        float inflow_velocity_y_min = 1.2f;
+        float inflow_velocity_y_max = 0.0f;
+        float inflow_velocity_z_min = 0.0f;
+        float inflow_velocity_z_max = 0.0f;
+        float inflow_scalar_x_min   = 0.8f;
+        float inflow_scalar_x_max   = 0.8f;
+        float inflow_scalar_y_min   = 0.8f;
+        float inflow_scalar_y_max   = 0.0f;
+        float inflow_scalar_z_min   = 0.8f;
+        float inflow_scalar_z_max   = 0.8f;
         int32_t block_x             = 8;
         int32_t block_y             = 8;
         int32_t block_z             = 4;
@@ -166,6 +180,30 @@ namespace {
         float temperature_buoyancy   = 0.12f;
         float vorticity_epsilon      = 2.0f;
         int32_t pressure_iterations  = 80;
+        uint32_t boundary_x_min      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
+        uint32_t boundary_x_max      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
+        uint32_t boundary_y_min      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
+        uint32_t boundary_y_max      = VISUAL_SMOKE_BOUNDARY_OUTFLOW;
+        uint32_t boundary_z_min      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
+        uint32_t boundary_z_max      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
+        float inflow_velocity_x_min  = 0.0f;
+        float inflow_velocity_x_max  = 0.0f;
+        float inflow_velocity_y_min  = 1.2f;
+        float inflow_velocity_y_max  = 0.0f;
+        float inflow_velocity_z_min  = 0.0f;
+        float inflow_velocity_z_max  = 0.0f;
+        float inflow_density_x_min   = 0.25f;
+        float inflow_density_x_max   = 0.25f;
+        float inflow_density_y_min   = 0.25f;
+        float inflow_density_y_max   = 0.0f;
+        float inflow_density_z_min   = 0.25f;
+        float inflow_density_z_max   = 0.25f;
+        float inflow_temperature_x_min = 0.8f;
+        float inflow_temperature_x_max = 1.6f;
+        float inflow_temperature_y_min = 1.2f;
+        float inflow_temperature_y_max = 0.0f;
+        float inflow_temperature_z_min = 1.2f;
+        float inflow_temperature_z_max = 1.2f;
         int32_t block_x              = 8;
         int32_t block_y              = 8;
         int32_t block_z              = 4;
@@ -287,6 +325,12 @@ int main() {
                 .boundary_y_max                = stable_settings.desc.boundary_y_max,
                 .boundary_z_min                = stable_settings.desc.boundary_z_min,
                 .boundary_z_max                = stable_settings.desc.boundary_z_max,
+                .inflow_velocity_x_min        = stable_settings.desc.inflow_velocity_x_min,
+                .inflow_velocity_x_max        = stable_settings.desc.inflow_velocity_x_max,
+                .inflow_velocity_y_min        = stable_settings.desc.inflow_velocity_y_min,
+                .inflow_velocity_y_max        = stable_settings.desc.inflow_velocity_y_max,
+                .inflow_velocity_z_min        = stable_settings.desc.inflow_velocity_z_min,
+                .inflow_velocity_z_max        = stable_settings.desc.inflow_velocity_z_max,
                 .velocity_x                    = stable_runtime.velocity_x,
                 .velocity_y                    = stable_runtime.velocity_y,
                 .velocity_z                    = stable_runtime.velocity_z,
@@ -318,6 +362,12 @@ int main() {
                 .boundary_y_max             = stable_settings.desc.boundary_y_max,
                 .boundary_z_min             = stable_settings.desc.boundary_z_min,
                 .boundary_z_max             = stable_settings.desc.boundary_z_max,
+                .inflow_velocity_x_min     = stable_settings.desc.inflow_velocity_x_min,
+                .inflow_velocity_x_max     = stable_settings.desc.inflow_velocity_x_max,
+                .inflow_velocity_y_min     = stable_settings.desc.inflow_velocity_y_min,
+                .inflow_velocity_y_max     = stable_settings.desc.inflow_velocity_y_max,
+                .inflow_velocity_z_min     = stable_settings.desc.inflow_velocity_z_min,
+                .inflow_velocity_z_max     = stable_settings.desc.inflow_velocity_z_max,
                 .velocity_x                 = stable_runtime.velocity_x,
                 .velocity_y                 = stable_runtime.velocity_y,
                 .velocity_z                 = stable_runtime.velocity_z,
@@ -346,6 +396,12 @@ int main() {
                 .boundary_y_max             = stable_settings.desc.boundary_y_max,
                 .boundary_z_min             = stable_settings.desc.boundary_z_min,
                 .boundary_z_max             = stable_settings.desc.boundary_z_max,
+                .inflow_velocity_x_min     = stable_settings.desc.inflow_velocity_x_min,
+                .inflow_velocity_x_max     = stable_settings.desc.inflow_velocity_x_max,
+                .inflow_velocity_y_min     = stable_settings.desc.inflow_velocity_y_min,
+                .inflow_velocity_y_max     = stable_settings.desc.inflow_velocity_y_max,
+                .inflow_velocity_z_min     = stable_settings.desc.inflow_velocity_z_min,
+                .inflow_velocity_z_max     = stable_settings.desc.inflow_velocity_z_max,
                 .velocity_x                 = stable_runtime.velocity_x,
                 .velocity_y                 = stable_runtime.velocity_y,
                 .velocity_z                 = stable_runtime.velocity_z,
@@ -373,6 +429,12 @@ int main() {
                 .boundary_y_max            = stable_settings.desc.boundary_y_max,
                 .boundary_z_min            = stable_settings.desc.boundary_z_min,
                 .boundary_z_max            = stable_settings.desc.boundary_z_max,
+                .inflow_scalar_x_min       = stable_settings.desc.inflow_scalar_x_min,
+                .inflow_scalar_x_max       = stable_settings.desc.inflow_scalar_x_max,
+                .inflow_scalar_y_min       = stable_settings.desc.inflow_scalar_y_min,
+                .inflow_scalar_y_max       = stable_settings.desc.inflow_scalar_y_max,
+                .inflow_scalar_z_min       = stable_settings.desc.inflow_scalar_z_min,
+                .inflow_scalar_z_max       = stable_settings.desc.inflow_scalar_z_max,
                 .scalar                    = stable_runtime.density,
                 .temporary_scalar          = stable_runtime.temporary_density,
                 .temporary_previous_scalar = stable_runtime.temporary_previous_density,
@@ -402,6 +464,12 @@ int main() {
                 .boundary_y_max             = stable_settings.desc.boundary_y_max,
                 .boundary_z_min             = stable_settings.desc.boundary_z_min,
                 .boundary_z_max             = stable_settings.desc.boundary_z_max,
+                .inflow_scalar_x_min       = stable_settings.desc.inflow_scalar_x_min,
+                .inflow_scalar_x_max       = stable_settings.desc.inflow_scalar_x_max,
+                .inflow_scalar_y_min       = stable_settings.desc.inflow_scalar_y_min,
+                .inflow_scalar_y_max       = stable_settings.desc.inflow_scalar_y_max,
+                .inflow_scalar_z_min       = stable_settings.desc.inflow_scalar_z_min,
+                .inflow_scalar_z_max       = stable_settings.desc.inflow_scalar_z_max,
                 .scalar                     = stable_runtime.density,
                 .temporary_scalar           = stable_runtime.temporary_density,
                 .temporary_solution_storage = stable_runtime.temporary_pressure,
@@ -433,6 +501,18 @@ int main() {
                 .density_buoyancy          = visual_settings.desc.density_buoyancy,
                 .temperature_buoyancy      = visual_settings.desc.temperature_buoyancy,
                 .vorticity_epsilon         = visual_settings.desc.vorticity_epsilon,
+                .boundary_x_min           = visual_settings.desc.boundary_x_min,
+                .boundary_x_max           = visual_settings.desc.boundary_x_max,
+                .boundary_y_min           = visual_settings.desc.boundary_y_min,
+                .boundary_y_max           = visual_settings.desc.boundary_y_max,
+                .boundary_z_min           = visual_settings.desc.boundary_z_min,
+                .boundary_z_max           = visual_settings.desc.boundary_z_max,
+                .inflow_velocity_x_min    = visual_settings.desc.inflow_velocity_x_min,
+                .inflow_velocity_x_max    = visual_settings.desc.inflow_velocity_x_max,
+                .inflow_velocity_y_min    = visual_settings.desc.inflow_velocity_y_min,
+                .inflow_velocity_y_max    = visual_settings.desc.inflow_velocity_y_max,
+                .inflow_velocity_z_min    = visual_settings.desc.inflow_velocity_z_min,
+                .inflow_velocity_z_max    = visual_settings.desc.inflow_velocity_z_max,
                 .density                   = visual_runtime.density,
                 .temperature               = visual_runtime.temperature,
                 .velocity_x                = visual_runtime.velocity_x,
@@ -460,6 +540,18 @@ int main() {
                 .cell_size                     = visual_settings.desc.cell_size,
                 .dt                            = visual_settings.desc.dt,
                 .use_monotonic_cubic           = visual_settings.desc.use_monotonic_cubic,
+                .boundary_x_min               = visual_settings.desc.boundary_x_min,
+                .boundary_x_max               = visual_settings.desc.boundary_x_max,
+                .boundary_y_min               = visual_settings.desc.boundary_y_min,
+                .boundary_y_max               = visual_settings.desc.boundary_y_max,
+                .boundary_z_min               = visual_settings.desc.boundary_z_min,
+                .boundary_z_max               = visual_settings.desc.boundary_z_max,
+                .inflow_velocity_x_min        = visual_settings.desc.inflow_velocity_x_min,
+                .inflow_velocity_x_max        = visual_settings.desc.inflow_velocity_x_max,
+                .inflow_velocity_y_min        = visual_settings.desc.inflow_velocity_y_min,
+                .inflow_velocity_y_max        = visual_settings.desc.inflow_velocity_y_max,
+                .inflow_velocity_z_min        = visual_settings.desc.inflow_velocity_z_min,
+                .inflow_velocity_z_max        = visual_settings.desc.inflow_velocity_z_max,
                 .velocity_x                    = visual_runtime.velocity_x,
                 .velocity_y                    = visual_runtime.velocity_y,
                 .velocity_z                    = visual_runtime.velocity_z,
@@ -481,6 +573,18 @@ int main() {
                 .cell_size                     = visual_settings.desc.cell_size,
                 .dt                            = visual_settings.desc.dt,
                 .pressure_iterations           = visual_settings.desc.pressure_iterations,
+                .boundary_x_min               = visual_settings.desc.boundary_x_min,
+                .boundary_x_max               = visual_settings.desc.boundary_x_max,
+                .boundary_y_min               = visual_settings.desc.boundary_y_min,
+                .boundary_y_max               = visual_settings.desc.boundary_y_max,
+                .boundary_z_min               = visual_settings.desc.boundary_z_min,
+                .boundary_z_max               = visual_settings.desc.boundary_z_max,
+                .inflow_velocity_x_min        = visual_settings.desc.inflow_velocity_x_min,
+                .inflow_velocity_x_max        = visual_settings.desc.inflow_velocity_x_max,
+                .inflow_velocity_y_min        = visual_settings.desc.inflow_velocity_y_min,
+                .inflow_velocity_y_max        = visual_settings.desc.inflow_velocity_y_max,
+                .inflow_velocity_z_min        = visual_settings.desc.inflow_velocity_z_min,
+                .inflow_velocity_z_max        = visual_settings.desc.inflow_velocity_z_max,
                 .temporary_previous_velocity_x = visual_runtime.temporary_previous_velocity_x,
                 .temporary_previous_velocity_y = visual_runtime.temporary_previous_velocity_y,
                 .temporary_previous_velocity_z = visual_runtime.temporary_previous_velocity_z,
@@ -495,8 +599,26 @@ int main() {
             };
 
             VisualSimulationOfSmokeScalarFlowBinding scalar_bindings[2] = {
-                VisualSimulationOfSmokeScalarFlowBinding{.scalar = visual_runtime.density, .temporary_previous_scalar = visual_runtime.temporary_previous_density, .clamp_non_negative = 1u},
-                VisualSimulationOfSmokeScalarFlowBinding{.scalar = visual_runtime.temperature, .temporary_previous_scalar = visual_runtime.temporary_previous_temperature, .clamp_non_negative = 0u},
+                VisualSimulationOfSmokeScalarFlowBinding{.scalar = visual_runtime.density,
+                    .temporary_previous_scalar = visual_runtime.temporary_previous_density,
+                    .clamp_non_negative = 1u,
+                    .inflow_scalar_x_min = visual_settings.desc.inflow_density_x_min,
+                    .inflow_scalar_x_max = visual_settings.desc.inflow_density_x_max,
+                    .inflow_scalar_y_min = visual_settings.desc.inflow_density_y_min,
+                    .inflow_scalar_y_max = visual_settings.desc.inflow_density_y_max,
+                    .inflow_scalar_z_min = visual_settings.desc.inflow_density_z_min,
+                    .inflow_scalar_z_max = visual_settings.desc.inflow_density_z_max,
+                },
+                VisualSimulationOfSmokeScalarFlowBinding{.scalar = visual_runtime.temperature,
+                    .temporary_previous_scalar = visual_runtime.temporary_previous_temperature,
+                    .clamp_non_negative = 0u,
+                    .inflow_scalar_x_min = visual_settings.desc.inflow_temperature_x_min,
+                    .inflow_scalar_x_max = visual_settings.desc.inflow_temperature_x_max,
+                    .inflow_scalar_y_min = visual_settings.desc.inflow_temperature_y_min,
+                    .inflow_scalar_y_max = visual_settings.desc.inflow_temperature_y_max,
+                    .inflow_scalar_z_min = visual_settings.desc.inflow_temperature_z_min,
+                    .inflow_scalar_z_max = visual_settings.desc.inflow_temperature_z_max,
+                },
             };
             VisualSimulationOfSmokeAdvectScalarFlowDesc scalar_flow_desc{
                 .struct_size         = sizeof(VisualSimulationOfSmokeAdvectScalarFlowDesc),
@@ -507,6 +629,12 @@ int main() {
                 .cell_size           = visual_settings.desc.cell_size,
                 .dt                  = visual_settings.desc.dt,
                 .use_monotonic_cubic = visual_settings.desc.use_monotonic_cubic,
+                .boundary_x_min      = visual_settings.desc.boundary_x_min,
+                .boundary_x_max      = visual_settings.desc.boundary_x_max,
+                .boundary_y_min      = visual_settings.desc.boundary_y_min,
+                .boundary_y_max      = visual_settings.desc.boundary_y_max,
+                .boundary_z_min      = visual_settings.desc.boundary_z_min,
+                .boundary_z_max      = visual_settings.desc.boundary_z_max,
                 .scalar_bindings     = scalar_bindings,
                 .scalar_count        = 2,
                 .velocity_x          = visual_runtime.velocity_x,
@@ -1221,11 +1349,11 @@ int main() {
                 if (ImGui::SliderInt("Diffuse Iterations", &stable_settings.desc.diffuse_iterations, 1, 64)) reset_requested = true;
                 if (ImGui::SliderInt("Pressure Iterations", &stable_settings.desc.pressure_iterations, 4, 192)) reset_requested = true;
                 auto draw_boundary_combo = [&](const char* label, uint32_t& value) {
-                    int boundary = std::clamp(static_cast<int>(value), 0, static_cast<int>(stable_boundary_labels.size()) - 1);
-                    if (ImGui::BeginCombo(label, stable_boundary_labels[static_cast<size_t>(boundary)])) {
-                        for (int i = 0; i < static_cast<int>(stable_boundary_labels.size()); ++i) {
+                    int boundary = std::clamp(static_cast<int>(value), 0, static_cast<int>(boundary_labels.size()) - 1);
+                    if (ImGui::BeginCombo(label, boundary_labels[static_cast<size_t>(boundary)])) {
+                        for (int i = 0; i < static_cast<int>(boundary_labels.size()); ++i) {
                             const bool is_selected = boundary == i;
-                            if (ImGui::Selectable(stable_boundary_labels[static_cast<size_t>(i)], is_selected)) {
+                            if (ImGui::Selectable(boundary_labels[static_cast<size_t>(i)], is_selected)) {
                                 boundary        = i;
                                 value           = static_cast<uint32_t>(i);
                                 reset_requested = true;
@@ -1243,6 +1371,18 @@ int main() {
                 draw_boundary_combo("Boundary Y+", stable_settings.desc.boundary_y_max);
                 draw_boundary_combo("Boundary Z-", stable_settings.desc.boundary_z_min);
                 draw_boundary_combo("Boundary Z+", stable_settings.desc.boundary_z_max);
+                ImGui::SliderFloat("Inflow Vel X-", &stable_settings.desc.inflow_velocity_x_min, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel X+", &stable_settings.desc.inflow_velocity_x_max, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel Y-", &stable_settings.desc.inflow_velocity_y_min, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel Y+", &stable_settings.desc.inflow_velocity_y_max, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel Z-", &stable_settings.desc.inflow_velocity_z_min, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel Z+", &stable_settings.desc.inflow_velocity_z_max, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density X-", &stable_settings.desc.inflow_scalar_x_min, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density X+", &stable_settings.desc.inflow_scalar_x_max, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density Y-", &stable_settings.desc.inflow_scalar_y_min, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density Y+", &stable_settings.desc.inflow_scalar_y_max, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density Z-", &stable_settings.desc.inflow_scalar_z_min, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density Z+", &stable_settings.desc.inflow_scalar_z_max, 0.0f, 3.0f, "%.2f");
                 ImGui::Separator();
                 ImGui::Checkbox("Emit Source", &stable_settings.emit_source);
                 ImGui::TextUnformatted("Dual corner jets: left-bottom and right-bottom -> center");
@@ -1270,6 +1410,47 @@ int main() {
                     visual_settings.desc.use_monotonic_cubic = use_monotonic_cubic ? 1u : 0u;
                     reset_requested                          = true;
                 }
+                auto draw_boundary_combo = [&](const char* label, uint32_t& value) {
+                    int boundary = std::clamp(static_cast<int>(value), 0, static_cast<int>(boundary_labels.size()) - 1);
+                    if (ImGui::BeginCombo(label, boundary_labels[static_cast<size_t>(boundary)])) {
+                        for (int i = 0; i < static_cast<int>(boundary_labels.size()); ++i) {
+                            const bool is_selected = boundary == i;
+                            if (ImGui::Selectable(boundary_labels[static_cast<size_t>(i)], is_selected)) {
+                                boundary        = i;
+                                value           = static_cast<uint32_t>(i);
+                                reset_requested = true;
+                            }
+                            if (is_selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                };
+                ImGui::Separator();
+                ImGui::TextUnformatted("Boundary Conditions");
+                draw_boundary_combo("Boundary X-", visual_settings.desc.boundary_x_min);
+                draw_boundary_combo("Boundary X+", visual_settings.desc.boundary_x_max);
+                draw_boundary_combo("Boundary Y-", visual_settings.desc.boundary_y_min);
+                draw_boundary_combo("Boundary Y+", visual_settings.desc.boundary_y_max);
+                draw_boundary_combo("Boundary Z-", visual_settings.desc.boundary_z_min);
+                draw_boundary_combo("Boundary Z+", visual_settings.desc.boundary_z_max);
+                ImGui::SliderFloat("Inflow Vel X-", &visual_settings.desc.inflow_velocity_x_min, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel X+", &visual_settings.desc.inflow_velocity_x_max, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel Y-", &visual_settings.desc.inflow_velocity_y_min, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel Y+", &visual_settings.desc.inflow_velocity_y_max, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel Z-", &visual_settings.desc.inflow_velocity_z_min, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Vel Z+", &visual_settings.desc.inflow_velocity_z_max, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density X-", &visual_settings.desc.inflow_density_x_min, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density X+", &visual_settings.desc.inflow_density_x_max, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density Y-", &visual_settings.desc.inflow_density_y_min, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density Y+", &visual_settings.desc.inflow_density_y_max, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density Z-", &visual_settings.desc.inflow_density_z_min, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Density Z+", &visual_settings.desc.inflow_density_z_max, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Temp X-", &visual_settings.desc.inflow_temperature_x_min, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Temp X+", &visual_settings.desc.inflow_temperature_x_max, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Temp Y-", &visual_settings.desc.inflow_temperature_y_min, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Temp Y+", &visual_settings.desc.inflow_temperature_y_max, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Temp Z-", &visual_settings.desc.inflow_temperature_z_min, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Inflow Temp Z+", &visual_settings.desc.inflow_temperature_z_max, 0.0f, 3.0f, "%.2f");
                 ImGui::Separator();
                 ImGui::Checkbox("Emit Source", &visual_settings.emit_source);
                 ImGui::TextUnformatted("Dual corner jets: left-bottom and right-bottom -> center");
