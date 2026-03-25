@@ -116,7 +116,11 @@ namespace {
         float inflow_scalar_z_min   = 0.8f;
         float inflow_scalar_z_max   = 0.8f;
         float ambient_temperature   = 0.0f;
-        float density_buoyancy      = 0.045f;
+        float density_buoyancy      = 0.35f;
+        float temperature_buoyancy  = 0.0f;
+        float uniform_force_x       = 0.0f;
+        float uniform_force_y       = 0.0f;
+        float uniform_force_z       = 0.0f;
         int32_t block_x             = 8;
         int32_t block_y             = 8;
         int32_t block_z             = 4;
@@ -135,7 +139,7 @@ namespace {
         float source_b_r     = 0.12f;
         float source_b_g     = 0.38f;
         float source_b_b     = 1.00f;
-        float jet_speed      = 500.6f;
+        float jet_speed      = 48.0f;
         float upward_bias    = 0.20f;
         float corner_inset   = 0.14f;
         float source_height  = 0.10f;
@@ -316,6 +320,7 @@ int main() {
                 .stream                     = stable_runtime.sim_stream,
             };
 
+            const float inv_dt = 1.0f / (std::max)(stable_settings.desc.dt, 1.0e-6f);
             StableFluidsAddForceDesc add_force_desc{
                 .struct_size            = sizeof(StableFluidsAddForceDesc),
                 .api_version            = STABLE_FLUIDS_API_VERSION,
@@ -336,8 +341,11 @@ int main() {
                 .inflow_velocity_z_min  = stable_settings.desc.inflow_velocity_z_min,
                 .inflow_velocity_z_max  = stable_settings.desc.inflow_velocity_z_max,
                 .ambient_temperature    = stable_settings.desc.ambient_temperature,
-                .density_buoyancy       = stable_settings.desc.density_buoyancy,
+                .density_buoyancy       = stable_settings.desc.density_buoyancy * inv_dt,
                 .temperature_buoyancy   = 0.0f,
+                .uniform_force_x        = stable_settings.desc.uniform_force_x * inv_dt,
+                .uniform_force_y        = stable_settings.desc.uniform_force_y * inv_dt,
+                .uniform_force_z        = stable_settings.desc.uniform_force_z * inv_dt,
                 .velocity_x             = stable_runtime.velocity_x,
                 .velocity_y             = stable_runtime.velocity_y,
                 .velocity_z             = stable_runtime.velocity_z,
@@ -1157,8 +1165,17 @@ int main() {
                 ImGui::SliderFloat("Inflow Density Y+", &stable_settings.desc.inflow_scalar_y_max, 0.0f, 3.0f, "%.2f");
                 ImGui::SliderFloat("Inflow Density Z-", &stable_settings.desc.inflow_scalar_z_min, 0.0f, 3.0f, "%.2f");
                 ImGui::SliderFloat("Inflow Density Z+", &stable_settings.desc.inflow_scalar_z_max, 0.0f, 3.0f, "%.2f");
+                ImGui::Separator();
+                ImGui::TextUnformatted("Forces");
                 ImGui::SliderFloat("Ambient Temp", &stable_settings.desc.ambient_temperature, -2.0f, 2.0f, "%.2f");
-                ImGui::SliderFloat("Density Buoyancy", &stable_settings.desc.density_buoyancy, 0.0f, 0.30f, "%.4f");
+                ImGui::SliderFloat("Density Buoyancy (dv/step)", &stable_settings.desc.density_buoyancy, 0.0f, 2.0f, "%.4f");
+                ImGui::BeginDisabled();
+                ImGui::SliderFloat("Temperature Buoyancy (dv/step)", &stable_settings.desc.temperature_buoyancy, 0.0f, 2.0f, "%.4f");
+                ImGui::EndDisabled();
+                ImGui::SliderFloat("Uniform Force X (dv/step)", &stable_settings.desc.uniform_force_x, -2.0f, 2.0f, "%.3f");
+                ImGui::SliderFloat("Uniform Force Y (dv/step)", &stable_settings.desc.uniform_force_y, -2.0f, 2.0f, "%.3f");
+                ImGui::SliderFloat("Uniform Force Z (dv/step)", &stable_settings.desc.uniform_force_z, -2.0f, 2.0f, "%.3f");
+                ImGui::TextUnformatted("Note: Temperature buoyancy requires a temperature field and is currently inactive in 001 app.");
                 ImGui::Separator();
                 ImGui::Checkbox("Emit Source", &stable_settings.emit_source);
                 ImGui::TextUnformatted("Dual corner jets: left-bottom and right-bottom -> center");
@@ -1170,7 +1187,7 @@ int main() {
                 ImGui::SliderFloat("Dye Amount", &stable_settings.dye_amount, 0.0f, 2.0f, "%.2f");
                 ImGui::ColorEdit3("Source A Dye", &stable_settings.source_a_r);
                 ImGui::ColorEdit3("Source B Dye", &stable_settings.source_b_r);
-                ImGui::SliderFloat("Jet Speed", &stable_settings.jet_speed, 0.2f, 6.0f, "%.2f");
+                ImGui::SliderFloat("Jet Speed", &stable_settings.jet_speed, 0.2f, 200.0f, "%.2f");
                 ImGui::SliderFloat("Upward Bias", &stable_settings.upward_bias, -1.0f, 2.0f, "%.2f");
 
             ImGui::End();
