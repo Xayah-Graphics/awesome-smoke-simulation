@@ -82,15 +82,16 @@ namespace app {
         smoke_shader_module_                    = pipeline::load_shader_module(vkctx_.device, smoke_shader_spv);
 
         std::array<DescriptorSetLayout, 1> pipeline_set_layouts{*field_set_layout_};
-        pipeline::GraphicsPipelineDesc pipeline_desc{};
-        pipeline_desc.color_format         = sc_.format;
-        pipeline_desc.use_depth            = false;
-        pipeline_desc.use_blend            = false;
-        pipeline_desc.topology             = PrimitiveTopology::eTriangleList;
-        pipeline_desc.cull                 = CullModeFlagBits::eNone;
-        pipeline_desc.push_constant_bytes  = sizeof(PushConstants);
-        pipeline_desc.push_constant_stages = ShaderStageFlagBits::eVertex | ShaderStageFlagBits::eFragment;
-        pipeline_desc.set_layouts          = pipeline_set_layouts;
+        pipeline::GraphicsPipelineDesc pipeline_desc{
+            .color_format         = sc_.format,
+            .use_depth            = false,
+            .use_blend            = false,
+            .topology             = PrimitiveTopology::eTriangleList,
+            .cull                 = CullModeFlagBits::eNone,
+            .push_constant_bytes  = sizeof(PushConstants),
+            .push_constant_stages = ShaderStageFlagBits::eVertex | ShaderStageFlagBits::eFragment,
+            .set_layouts          = pipeline_set_layouts,
+        };
 
         pipeline::VertexInput empty_vertex_input{};
         smoke_pipeline_  = pipeline::create_graphics_pipeline(vkctx_.device, empty_vertex_input, pipeline_desc, smoke_shader_module_, "vs_main", "fs_main");
