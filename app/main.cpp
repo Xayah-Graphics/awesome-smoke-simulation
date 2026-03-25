@@ -249,11 +249,11 @@ int main() {
         ViewerRuntime viewer_runtime{};
         std::vector<SnapshotSlot> snapshot_slots{};
 
-        auto scalar_bytes        = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
-        auto velocity_x_bytes    = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
-        auto velocity_y_bytes    = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
-        auto velocity_z_bytes    = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
-        auto current_fields = [&]() -> std::span<const FieldChoice> { return backend_kind == BackendKind::StableFluids001 ? std::span<const FieldChoice>(stable_fields) : std::span<const FieldChoice>(visual_fields); };
+        auto scalar_bytes     = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto velocity_x_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto velocity_y_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto velocity_z_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
+        auto current_fields   = [&]() -> std::span<const FieldChoice> { return backend_kind == BackendKind::StableFluids001 ? std::span<const FieldChoice>(stable_fields) : std::span<const FieldChoice>(visual_fields); };
 
         auto current_field_index = [&]() -> int& { return backend_kind == BackendKind::StableFluids001 ? stable_settings.selected_field : visual_settings.selected_field; };
 
@@ -403,7 +403,7 @@ int main() {
                 cudaStreamDestroy(stable_runtime.sim_stream);
                 stable_runtime.sim_stream = nullptr;
             }
-            stable_runtime.device_allocated = false;
+            stable_runtime.device_allocated              = false;
             stable_runtime.density                       = nullptr;
             stable_runtime.velocity_x                    = nullptr;
             stable_runtime.velocity_y                    = nullptr;
@@ -451,7 +451,7 @@ int main() {
                 cudaStreamDestroy(visual_runtime.sim_stream);
                 visual_runtime.sim_stream = nullptr;
             }
-            visual_runtime.device_allocated = false;
+            visual_runtime.device_allocated               = false;
             visual_runtime.density                        = nullptr;
             visual_runtime.temperature                    = nullptr;
             visual_runtime.velocity_x                     = nullptr;
@@ -490,10 +490,10 @@ int main() {
                 SnapshotSlot slot{};
                 slot.descriptor_set = std::move(descriptor_sets[slot_index]);
 #if defined(_WIN32)
-                constexpr auto memory_handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+                constexpr auto memory_handle_type    = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
                 constexpr auto semaphore_handle_type = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
 #else
-                constexpr auto memory_handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+                constexpr auto memory_handle_type    = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
                 constexpr auto semaphore_handle_type = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
 #endif
                 vk::SemaphoreTypeCreateInfo timeline_semaphore_ci{
@@ -689,7 +689,7 @@ int main() {
                 const auto stable_velocity_x_bytes = velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 const auto stable_velocity_y_bytes = velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
                 const auto stable_velocity_z_bytes = velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
-                stable_runtime.device_allocated = true;
+                stable_runtime.device_allocated    = true;
                 cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), viewer_runtime.field_bytes), "cudaMalloc stable density");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), stable_velocity_x_bytes), "cudaMalloc stable velocity_x");
@@ -710,7 +710,7 @@ int main() {
                 const auto visual_velocity_x_bytes = velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_y_bytes = velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_z_bytes = velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
-                visual_runtime.device_allocated = true;
+                visual_runtime.device_allocated    = true;
                 cuda_ok(cudaStreamCreateWithFlags(&visual_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags visual_stream");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.density), viewer_runtime.field_bytes), "cudaMalloc visual density");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temperature), viewer_runtime.field_bytes), "cudaMalloc visual temperature");
@@ -744,8 +744,8 @@ int main() {
                     const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
                     const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
                     const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                    stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
-                                  stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
+                    stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.velocity_x,
+                                  stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
                         "app_add_stable_source_async");
                     StableFluidsStepDesc step_desc{};
                     step_desc.struct_size                   = sizeof(StableFluidsStepDesc);
@@ -796,8 +796,8 @@ int main() {
                     const float center_x = visual_settings.source_u * static_cast<float>(visual_settings.desc.nx);
                     const float center_y = visual_settings.source_v * static_cast<float>(visual_settings.desc.ny);
                     const float center_z = visual_settings.source_w * static_cast<float>(visual_settings.desc.nz);
-                    smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
-                                 visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
+                    smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius, visual_settings.density_amount,
+                                 visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
                         "app_add_visual_source_async");
                     VisualSimulationOfSmokeStepDesc step_desc{};
                     step_desc.struct_size                    = sizeof(VisualSimulationOfSmokeStepDesc);

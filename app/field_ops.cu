@@ -29,11 +29,11 @@ namespace {
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (x >= nx || y >= ny || z >= nz) return;
 
-        const float dx = (static_cast<float>(x) + 0.5f) - center_x;
-        const float dy = (static_cast<float>(y) + 0.5f) - center_y;
-        const float dz = (static_cast<float>(z) + 0.5f) - center_z;
+        const float dx      = (static_cast<float>(x) + 0.5f) - center_x;
+        const float dy      = (static_cast<float>(y) + 0.5f) - center_y;
+        const float dz      = (static_cast<float>(z) + 0.5f) - center_z;
         const float radius2 = radius * radius;
-        const float dist2 = dx * dx + dy * dy + dz * dz;
+        const float dist2   = dx * dx + dy * dy + dz * dz;
         if (dist2 > radius2) return;
         density[index_3d(x, y, z, nx, ny)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
     }
@@ -44,9 +44,9 @@ namespace {
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (x >= nx || y >= ny || z >= nz) return;
 
-        const float vx = 0.5f * (fetch_clamped(velocity_x, x, y, z, nx + 1, ny, nz) + fetch_clamped(velocity_x, x + 1, y, z, nx + 1, ny, nz));
-        const float vy = 0.5f * (fetch_clamped(velocity_y, x, y, z, nx, ny + 1, nz) + fetch_clamped(velocity_y, x, y + 1, z, nx, ny + 1, nz));
-        const float vz = 0.5f * (fetch_clamped(velocity_z, x, y, z, nx, ny, nz + 1) + fetch_clamped(velocity_z, x, y, z + 1, nx, ny, nz + 1));
+        const float vx                         = 0.5f * (fetch_clamped(velocity_x, x, y, z, nx + 1, ny, nz) + fetch_clamped(velocity_x, x + 1, y, z, nx + 1, ny, nz));
+        const float vy                         = 0.5f * (fetch_clamped(velocity_y, x, y, z, nx, ny + 1, nz) + fetch_clamped(velocity_y, x, y + 1, z, nx, ny + 1, nz));
+        const float vz                         = 0.5f * (fetch_clamped(velocity_z, x, y, z, nx, ny, nz + 1) + fetch_clamped(velocity_z, x, y, z + 1, nx, ny, nz + 1));
         destination[index_3d(x, y, z, nx, ny)] = sqrtf(vx * vx + vy * vy + vz * vz);
     }
 
@@ -56,14 +56,14 @@ namespace {
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (x >= nx || y >= ny || z >= nz) return;
 
-        const float dx = (static_cast<float>(x) + 0.5f) - center_x;
-        const float dy = (static_cast<float>(y) + 0.5f) - center_y;
-        const float dz = (static_cast<float>(z) + 0.5f) - center_z;
+        const float dx      = (static_cast<float>(x) + 0.5f) - center_x;
+        const float dy      = (static_cast<float>(y) + 0.5f) - center_y;
+        const float dz      = (static_cast<float>(z) + 0.5f) - center_z;
         const float radius2 = radius * radius;
-        const float dist2 = dx * dx + dy * dy + dz * dz;
+        const float dist2   = dx * dx + dy * dy + dz * dz;
         if (dist2 > radius2) return;
 
-        const auto index = index_3d(x, y, z, nx, ny);
+        const auto index   = index_3d(x, y, z, nx, ny);
         const float weight = fmaxf(0.0f, 1.0f - dist2 / radius2);
         density[index] += density_amount * weight;
         temperature[index] += temperature_amount * weight;
@@ -75,11 +75,11 @@ namespace {
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (x > nx || y >= ny || z >= nz) return;
 
-        const float dx = static_cast<float>(x) - center_x;
-        const float dy = (static_cast<float>(y) + 0.5f) - center_y;
-        const float dz = (static_cast<float>(z) + 0.5f) - center_z;
+        const float dx      = static_cast<float>(x) - center_x;
+        const float dy      = (static_cast<float>(y) + 0.5f) - center_y;
+        const float dz      = (static_cast<float>(z) + 0.5f) - center_z;
         const float radius2 = radius * radius;
-        const float dist2 = dx * dx + dy * dy + dz * dz;
+        const float dist2   = dx * dx + dy * dy + dz * dz;
         if (dist2 > radius2) return;
         velocity_x[index_3d(x, y, z, nx + 1, ny)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
     }
@@ -90,11 +90,11 @@ namespace {
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (x >= nx || y > ny || z >= nz) return;
 
-        const float dx = (static_cast<float>(x) + 0.5f) - center_x;
-        const float dy = static_cast<float>(y) - center_y;
-        const float dz = (static_cast<float>(z) + 0.5f) - center_z;
+        const float dx      = (static_cast<float>(x) + 0.5f) - center_x;
+        const float dy      = static_cast<float>(y) - center_y;
+        const float dz      = (static_cast<float>(z) + 0.5f) - center_z;
         const float radius2 = radius * radius;
-        const float dist2 = dx * dx + dy * dy + dz * dz;
+        const float dist2   = dx * dx + dy * dy + dz * dz;
         if (dist2 > radius2) return;
         velocity_y[index_3d(x, y, z, nx, ny + 1)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
     }
@@ -105,19 +105,19 @@ namespace {
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (x >= nx || y >= ny || z > nz) return;
 
-        const float dx = (static_cast<float>(x) + 0.5f) - center_x;
-        const float dy = (static_cast<float>(y) + 0.5f) - center_y;
-        const float dz = static_cast<float>(z) - center_z;
+        const float dx      = (static_cast<float>(x) + 0.5f) - center_x;
+        const float dy      = (static_cast<float>(y) + 0.5f) - center_y;
+        const float dz      = static_cast<float>(z) - center_z;
         const float radius2 = radius * radius;
-        const float dist2 = dx * dx + dy * dy + dz * dz;
+        const float dist2   = dx * dx + dy * dy + dz * dz;
         if (dist2 > radius2) return;
         velocity_z[index_3d(x, y, z, nx, ny)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
     }
 
 } // namespace
 
-int32_t app_add_stable_source_async(void* density, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z, int32_t block_x, int32_t block_y, int32_t block_z,
-    void* cuda_stream) {
+int32_t app_add_stable_source_async(
+    void* density, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream) {
     if (nx <= 0 || ny <= 0 || nz <= 0) return 1001;
     if (radius <= 0.0f) return 1005;
     if (density == nullptr) return 2001;
