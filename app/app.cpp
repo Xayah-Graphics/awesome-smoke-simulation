@@ -154,19 +154,13 @@ namespace app {
         } else {
             ImGui::TextUnformatted("View Mode: Scalar");
         }
-        ImGui::SliderInt("March Steps", &render_.march_steps, 24, 192);
-        ImGui::SliderFloat("Density Scale", &render_.density_scale, 0.05f, 4.0f, "%.2f");
+        ImGui::SliderInt("March Steps", &render_.march_steps, 24, 224);
+        ImGui::SliderFloat("Density Scale", &render_.density_scale, 0.05f, 2.0f, "%.2f");
         if (render_.mode == RenderMode::Smoke) {
-            ImGui::SliderInt("Shadow Steps", &render_.shadow_steps, 4, 48);
-            ImGui::SliderFloat("Absorption", &render_.absorption, 0.1f, 6.0f, "%.2f");
-            ImGui::ColorEdit3("Smoke Color", &render_.smoke_r);
-            ImGui::SliderFloat("Light X", &render_.light_x, -1.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("Light Y", &render_.light_y, -1.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("Light Z", &render_.light_z, -1.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("Light Intensity", &render_.light_intensity, 0.0f, 6.0f, "%.2f");
-            ImGui::SliderFloat("Ambient Light", &render_.ambient_light, 0.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("Shadow Strength", &render_.shadow_strength, 0.1f, 4.0f, "%.2f");
-            ImGui::SliderFloat("Phase G", &render_.phase_g, -0.3f, 0.8f, "%.2f");
+            ImGui::SliderFloat("Absorption", &render_.absorption, 0.05f, 2.0f, "%.2f");
+            ImGui::SliderFloat("Softness", &render_.smoke_softness, 0.0f, 1.0f, "%.2f");
+            ImGui::ColorEdit3("Smoke Left Color", &render_.smoke_left_r);
+            ImGui::ColorEdit3("Smoke Right Color", &render_.smoke_right_r);
         } else {
             ImGui::SliderFloat("Value Min", &render_.scalar_min, -2.0f, 8.0f, "%.3f");
             ImGui::SliderFloat("Value Max", &render_.scalar_max, -2.0f, 8.0f, "%.3f");
@@ -225,7 +219,7 @@ namespace app {
         frames_.swapchain_image_layout[image_index] = ImageLayout::eColorAttachmentOptimal;
 
         ClearValue clear_value{};
-        clear_value.color = ClearColorValue{std::array<float, 4>{0.02f, 0.025f, 0.035f, 1.0f}};
+        clear_value.color = ClearColorValue{std::array<float, 4>{0.035f, 0.04f, 0.05f, 1.0f}};
         RenderingAttachmentInfo color_attachment{
             .imageView   = *sc_.image_views[image_index],
             .imageLayout = ImageLayout::eColorAttachmentOptimal,
@@ -252,9 +246,8 @@ namespace app {
         cmd.setScissor(0, Rect2D{{0, 0}, sc_.extent});
 
         if (field) {
-            const auto& matrices           = camera_.matrices();
-            const float half_fov_tan       = std::tan(camera_.config().fov_y_rad * 0.5f);
-            const vk::math::vec3 light_dir = vk::math::normalize(vk::math::vec3{render_.light_x, render_.light_y, render_.light_z, 0.0f});
+            const auto& matrices     = camera_.matrices();
+            const float half_fov_tan = std::tan(camera_.config().fov_y_rad * 0.5f);
             PushConstants push{};
             push.eye        = {matrices.eye.x, matrices.eye.y, matrices.eye.z, 1.0f};
             push.right      = {matrices.right.x, matrices.right.y, matrices.right.z, 0.0f};
@@ -262,13 +255,13 @@ namespace app {
             push.forward    = {matrices.forward.x, matrices.forward.y, matrices.forward.z, 0.0f};
             push.volume_min = {0.0f, 0.0f, 0.0f, 0.0f};
             push.volume_max = {
-                field->nx * field->cell_size,
-                field->ny * field->cell_size,
-                field->nz * field->cell_size,
+                static_cast<float>(field->nx) * field->cell_size,
+                static_cast<float>(field->ny) * field->cell_size,
+                static_cast<float>(field->nz) * field->cell_size,
                 0.0f,
             };
-            push.color_a = render_.mode == RenderMode::Smoke ? vk::math::vec4{render_.smoke_r, render_.smoke_g, render_.smoke_b, 1.0f} : vk::math::vec4{render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
-            push.color_b = render_.mode == RenderMode::Smoke ? vk::math::vec4{light_dir.x, light_dir.y, light_dir.z, render_.light_intensity} : vk::math::vec4{render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
+            push.color_a = render_.mode == RenderMode::Smoke ? vk::math::vec4{render_.smoke_left_r, render_.smoke_left_g, render_.smoke_left_b, 1.0f} : vk::math::vec4{render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
+            push.color_b = render_.mode == RenderMode::Smoke ? vk::math::vec4{render_.smoke_right_r, render_.smoke_right_g, render_.smoke_right_b, 1.0f} : vk::math::vec4{render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
             push.params0 = {
                 static_cast<float>(sc_.extent.width) / static_cast<float>((std::max) (sc_.extent.height, 1u)),
                 half_fov_tan,
@@ -282,12 +275,14 @@ namespace app {
                 static_cast<uint32_t>(render_.march_steps),
             };
             push.params2 = {
-                static_cast<uint32_t>(render_.shadow_steps),
                 static_cast<uint32_t>(render_.mode),
                 static_cast<uint32_t>(field->semantic),
                 0u,
+                0u,
             };
-            push.params3 = render_.mode == RenderMode::Smoke ? vk::math::vec4{render_.ambient_light, render_.shadow_strength, render_.phase_g, 0.0f} : vk::math::vec4{render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
+            push.params3 = render_.mode == RenderMode::Smoke
+                ? vk::math::vec4{0.0f, 0.0f, 0.0f, render_.smoke_softness}
+                : vk::math::vec4{render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
 
             cmd.bindPipeline(PipelineBindPoint::eGraphics, *smoke_pipeline_.pipeline);
             cmd.bindDescriptorSets(PipelineBindPoint::eGraphics, *smoke_pipeline_.layout, 0, {field->descriptor_set}, {});
@@ -345,12 +340,12 @@ namespace app {
         vk::camera::CameraState camera_state = camera_.state();
         camera_state.mode                    = vk::camera::Mode::Orbit;
         camera_state.orbit.target            = {
-            field.nx * field.cell_size * 0.5f,
-            field.ny * field.cell_size * 0.5f,
-            field.nz * field.cell_size * 0.5f,
+            static_cast<float>(field.nx) * field.cell_size * 0.5f,
+            static_cast<float>(field.ny) * field.cell_size * 0.5f,
+            static_cast<float>(field.nz) * field.cell_size * 0.5f,
             0.0f,
         };
-        camera_state.orbit.distance  = (std::max) ({field.nx, field.ny, field.nz}) * field.cell_size * 2.15f;
+        camera_state.orbit.distance  = static_cast<float>((std::max) ({field.nx, field.ny, field.nz})) * field.cell_size * 2.15f;
         camera_state.orbit.yaw_rad   = -0.78539816339f;
         camera_state.orbit.pitch_rad = -0.43633231299f;
         camera_.set_state(camera_state);
@@ -385,7 +380,7 @@ namespace app {
     void FieldRendererApp::recreate_swapchain() {
         vk::swapchain::recreate_swapchain(vkctx_, sctx_, sc_);
         vk::frame::on_swapchain_recreated(vkctx_, sc_, frames_);
-        const uint32_t image_count = static_cast<uint32_t>(sc_.images.size());
+        const auto image_count = static_cast<uint32_t>(sc_.images.size());
         if (imgui_sys_.image_count != image_count || imgui_sys_.min_image_count != image_count || imgui_sys_.color_format != sc_.format) {
             const bool docking   = imgui_sys_.docking;
             const bool viewports = imgui_sys_.viewports;

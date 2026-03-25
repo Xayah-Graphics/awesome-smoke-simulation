@@ -177,15 +177,15 @@ namespace {
         VisualStepConfig desc{};
         int selected_field       = 0;
         bool emit_source         = true;
-        float source_u           = 0.5f;
-        float source_v           = 0.18f;
-        float source_w           = 0.5f;
-        float source_radius      = 5.0f;
-        float density_amount     = 0.85f;
-        float temperature_amount = 1.35f;
-        float velocity_x         = 0.0f;
-        float velocity_y         = 1.2f;
-        float velocity_z         = 0.0f;
+        float source_radius            = 4.0f;
+        float density_amount           = 0.22f;
+        float temperature_amount_left  = 0.65f;
+        float temperature_amount_right = 1.45f;
+        float jet_speed                = 2.35f;
+        float upward_bias              = 0.30f;
+        float corner_inset             = 0.14f;
+        float source_height            = 0.10f;
+        float source_depth             = 0.14f;
     };
 
     struct VisualRuntime {
@@ -239,7 +239,7 @@ int main() {
     try {
         app::FieldRendererApp renderer;
         PlaybackState playback{};
-        BackendKind backend_kind = BackendKind::StableFluids001;
+        BackendKind backend_kind = BackendKind::VisualSmoke002;
         StableSettings stable_settings{};
         StableRuntime stable_runtime{};
         SolverStats stable_solver_stats{};
@@ -546,13 +546,21 @@ int main() {
             auto& render = renderer.render_settings();
             if (field.id == FieldId::Density) {
                 render.mode          = app::RenderMode::Smoke;
-                render.density_scale = 1.0f;
-                render.absorption    = 1.4f;
+                render.march_steps   = 96;
+                render.density_scale = 0.52f;
+                render.absorption    = 0.78f;
+                render.smoke_left_r  = 0.33f;
+                render.smoke_left_g  = 0.72f;
+                render.smoke_left_b  = 0.97f;
+                render.smoke_right_r = 0.98f;
+                render.smoke_right_g = 0.48f;
+                render.smoke_right_b = 0.34f;
+                render.smoke_softness = 0.72f;
             } else if (field.id == FieldId::Temperature) {
                 render.mode           = app::RenderMode::Scalar;
                 render.scalar_min     = 0.0f;
-                render.scalar_max     = 2.0f;
-                render.scalar_opacity = 2.0f;
+                render.scalar_max     = 1.8f;
+                render.scalar_opacity = 1.8f;
                 render.scalar_low_r   = 0.08f;
                 render.scalar_low_g   = 0.16f;
                 render.scalar_low_b   = 0.45f;
@@ -563,7 +571,7 @@ int main() {
                 render.mode           = app::RenderMode::Scalar;
                 render.scalar_min     = 0.0f;
                 render.scalar_max     = 3.0f;
-                render.scalar_opacity = 1.6f;
+                render.scalar_opacity = 1.35f;
                 render.scalar_low_r   = 0.04f;
                 render.scalar_low_g   = 0.18f;
                 render.scalar_low_b   = 0.36f;
@@ -571,6 +579,35 @@ int main() {
                 render.scalar_high_g  = 0.94f;
                 render.scalar_high_b  = 0.96f;
             }
+        };
+
+        auto inject_visual_dual_sources = [&]() {
+            const auto nx = static_cast<float>(visual_settings.desc.nx);
+            const auto ny = static_cast<float>(visual_settings.desc.ny);
+            const auto nz = static_cast<float>(visual_settings.desc.nz);
+            const float center_x = nx * 0.5f;
+            const float center_y = ny * 0.52f;
+            const float center_z = nz * 0.5f;
+            const float left_x = nx * visual_settings.corner_inset;
+            const float right_x = nx * (1.0f - visual_settings.corner_inset);
+            const float source_y = ny * visual_settings.source_height;
+            const float source_z = nz * visual_settings.source_depth;
+
+            auto emit_one = [&](const float source_x, const float temperature_amount) {
+                const float dir_x = center_x - source_x;
+                const float dir_y = center_y - source_y;
+                const float dir_z = center_z - source_z;
+                const float inv_len = 1.0f / (std::sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z) + 1.0e-6f);
+                const float velocity_x = dir_x * inv_len * visual_settings.jet_speed;
+                const float velocity_y = dir_y * inv_len * visual_settings.jet_speed + visual_settings.upward_bias;
+                const float velocity_z = dir_z * inv_len * visual_settings.jet_speed;
+                smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, source_x, source_y, source_z, visual_settings.source_radius,
+                             visual_settings.density_amount, temperature_amount, velocity_x, velocity_y, velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
+                    "app_add_visual_source_async");
+            };
+
+            emit_one(left_x, visual_settings.temperature_amount_left);
+            emit_one(right_x, visual_settings.temperature_amount_right);
         };
 
         auto active_snapshot = [&]() -> std::optional<app::ScalarFieldView> {
@@ -1002,12 +1039,7 @@ int main() {
                 cuda_ok(cudaMemsetAsync(visual_runtime.velocity_y, 0, velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_y");
                 cuda_ok(cudaMemsetAsync(visual_runtime.velocity_z, 0, velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_z");
                 if (visual_settings.emit_source) {
-                    const float center_x = visual_settings.source_u * static_cast<float>(visual_settings.desc.nx);
-                    const float center_y = visual_settings.source_v * static_cast<float>(visual_settings.desc.ny);
-                    const float center_z = visual_settings.source_w * static_cast<float>(visual_settings.desc.nz);
-                    smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius, visual_settings.density_amount,
-                                 visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
-                        "app_add_visual_source_async");
+                    inject_visual_dual_sources();
                     run_visual_step();
                 }
             }
@@ -1185,15 +1217,16 @@ int main() {
                 }
                 ImGui::Separator();
                 ImGui::Checkbox("Emit Source", &visual_settings.emit_source);
-                ImGui::SliderFloat("Source U", &visual_settings.source_u, 0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Source V", &visual_settings.source_v, 0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Source W", &visual_settings.source_w, 0.0f, 1.0f, "%.2f");
+                ImGui::TextUnformatted("Dual corner jets: left-bottom and right-bottom -> center");
+                ImGui::SliderFloat("Corner Inset", &visual_settings.corner_inset, 0.04f, 0.32f, "%.2f");
+                ImGui::SliderFloat("Source Height", &visual_settings.source_height, 0.03f, 0.24f, "%.2f");
+                ImGui::SliderFloat("Source Depth", &visual_settings.source_depth, 0.04f, 0.32f, "%.2f");
                 ImGui::SliderFloat("Source Radius", &visual_settings.source_radius, 1.0f, 16.0f, "%.1f");
-                ImGui::SliderFloat("Density Amount", &visual_settings.density_amount, 0.0f, 3.0f, "%.2f");
-                ImGui::SliderFloat("Temperature Amount", &visual_settings.temperature_amount, 0.0f, 4.0f, "%.2f");
-                ImGui::SliderFloat("Velocity X", &visual_settings.velocity_x, -3.0f, 3.0f, "%.2f");
-                ImGui::SliderFloat("Velocity Y", &visual_settings.velocity_y, -3.0f, 3.0f, "%.2f");
-                ImGui::SliderFloat("Velocity Z", &visual_settings.velocity_z, -3.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Density Amount", &visual_settings.density_amount, 0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Temp Left", &visual_settings.temperature_amount_left, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Temp Right", &visual_settings.temperature_amount_right, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Jet Speed", &visual_settings.jet_speed, 0.2f, 5.0f, "%.2f");
+                ImGui::SliderFloat("Upward Bias", &visual_settings.upward_bias, -1.0f, 2.0f, "%.2f");
             }
             ImGui::End();
 
@@ -1230,12 +1263,7 @@ int main() {
                         } else {
                             if (visual_settings.emit_source) {
                                 nvtx3::scoped_range range{"smoke_app.simulation.add_source"};
-                                const float center_x = visual_settings.source_u * static_cast<float>(visual_settings.desc.nx);
-                                const float center_y = visual_settings.source_v * static_cast<float>(visual_settings.desc.ny);
-                                const float center_z = visual_settings.source_w * static_cast<float>(visual_settings.desc.nz);
-                                smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, center_x, center_y, center_z, visual_settings.source_radius,
-                                             visual_settings.density_amount, visual_settings.temperature_amount, visual_settings.velocity_x, visual_settings.velocity_y, visual_settings.velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
-                                    "app_add_visual_source_async");
+                                inject_visual_dual_sources();
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};

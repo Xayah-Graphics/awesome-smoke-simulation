@@ -78,46 +78,6 @@ float2 intersect_aabb(float3 rayOrigin, float3 rayDir, float3 boundsMin, float3 
     return float2(entry, exit);
 }
 
-float phase_hg(float cosTheta, float g)
-{
-    float gg = g * g;
-    float denom = max(1.0 + gg - 2.0 * g * cosTheta, 1.0e-4);
-    return (1.0 - gg) / (12.566370614359172 * denom * sqrt(denom));
-}
-
-float march_light_transmittance(float3 worldPos, float3 lightDir, float densityScale, float absorption)
-{
-    float2 lightHit = intersect_aabb(worldPos + lightDir * 1.0e-3, lightDir, pc.volumeMin.xyz, pc.volumeMax.xyz);
-    float lightStart = max(lightHit.x, 0.0);
-    float lightEnd = lightHit.y;
-    if (lightEnd <= lightStart)
-    {
-        return 1.0;
-    }
-
-    uint shadowSteps = max(pc.params2.x, 1u);
-    float shadowStepLength = (lightEnd - lightStart) / shadowSteps;
-    float shadowTransmittance = 1.0;
-
-    [loop]
-    for (uint i = 0; i < shadowSteps; ++i)
-    {
-        float travel = lightStart + (i + 0.5) * shadowStepLength;
-        float3 shadowPos = worldPos + lightDir * travel;
-        float3 shadowUVW = (shadowPos - pc.volumeMin.xyz) / max(pc.volumeMax.xyz - pc.volumeMin.xyz, 1.0e-5.xxx);
-        float shadowDensity = sample_field(shadowUVW) * densityScale;
-        float shadowExtinction = shadowDensity * absorption * pc.params3.y * shadowStepLength;
-        shadowTransmittance *= exp(-shadowExtinction);
-
-        if (shadowTransmittance < 0.01)
-        {
-            return 0.0;
-        }
-    }
-
-    return shadowTransmittance;
-}
-
 float3 render_smoke(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 background)
 {
     float distanceInside = t1 - t0;
@@ -125,7 +85,8 @@ float3 render_smoke(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 
     float stepLength = distanceInside / steps;
     float transmittance = 1.0;
     float3 color = background;
-    float3 lightDir = normalize(pc.colorB.xyz);
+    float softness = saturate(pc.params3.w);
+    float densityGamma = lerp(1.3, 0.75, softness);
 
     [loop]
     for (uint i = 0; i < steps; ++i)
@@ -133,21 +94,21 @@ float3 render_smoke(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 
         float travel = t0 + (i + 0.5) * stepLength;
         float3 worldPos = rayOrigin + travel * rayDir;
         float3 uvw = (worldPos - pc.volumeMin.xyz) / max(pc.volumeMax.xyz - pc.volumeMin.xyz, 1.0e-5.xxx);
-        float density = sample_field(uvw) * pc.params0.z;
+        float density = max(sample_field(uvw) * pc.params0.z, 0.0);
         if (density < 1.0e-4)
         {
             continue;
         }
 
-        float extinction = density * pc.params0.w * stepLength;
-        float absorb = exp(-extinction);
-        float scatter = 1.0 - absorb;
-        float lightTransmittance = march_light_transmittance(worldPos, lightDir, pc.params0.z, pc.params0.w);
-        float cosTheta = dot(lightDir, -rayDir);
-        float phase = phase_hg(cosTheta, pc.params3.z) * 12.566370614359172;
-        float lighting = pc.params3.x + pc.colorB.w * lightTransmittance * phase;
-        color += transmittance * scatter * lighting * pc.colorA.rgb;
-        transmittance *= absorb;
+        density = pow(density, densityGamma);
+        float leftToRight = smoothstep(0.12, 0.88, uvw.x);
+        float heightTint = smoothstep(0.0, 0.45, uvw.y);
+        float3 sampleColor = lerp(pc.colorA.rgb, pc.colorB.rgb, leftToRight);
+        sampleColor *= lerp(0.78, 1.08, heightTint);
+
+        float alpha = 1.0 - exp(-density * pc.params0.w * stepLength);
+        color += transmittance * alpha * sampleColor;
+        transmittance *= 1.0 - alpha;
 
         if (transmittance < 0.01)
         {
@@ -225,8 +186,8 @@ float4 fs_main(VSOut input) : SV_Target
     float t0 = max(hit.x, 0.0);
     float t1 = hit.y;
 
-    float3 skyTop = float3(0.08, 0.10, 0.14);
-    float3 skyBottom = float3(0.02, 0.025, 0.035);
+    float3 skyTop = float3(0.10, 0.12, 0.16);
+    float3 skyBottom = float3(0.035, 0.04, 0.05);
     float horizon = saturate(0.5 + 0.5 * rayDir.y);
     float3 background = lerp(skyBottom, skyTop, horizon);
 
@@ -235,7 +196,7 @@ float4 fs_main(VSOut input) : SV_Target
         return float4(background, 1.0);
     }
 
-    float3 color = pc.params2.y == RENDER_MODE_SMOKE
+    float3 color = pc.params2.x == RENDER_MODE_SMOKE
         ? render_smoke(rayOrigin, rayDir, t0, t1, background)
         : render_scalar(rayOrigin, rayDir, t0, t1, background);
 
