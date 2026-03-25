@@ -24,6 +24,7 @@ jobs:
     env:
       CMAKE_BUILD_TYPE: Release
       CUDAToolkit_ROOT: /opt/cuda
+      SLANG_URL: https://github.com/shader-slang/slang/releases/download/v2026.1/slang-2026.1-linux-x86_64.tar.gz
 
     steps:
       - name: Prepare Arch keyring + update system
@@ -55,6 +56,21 @@ jobs:
           echo "/opt/cuda/bin" >> "$GITHUB_PATH"
           echo "CUDAToolkit_ROOT=/opt/cuda" >> "$GITHUB_ENV"
 
+      - name: Install Slang (slangc)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /opt/slang
+          curl -L --fail --retry 5 --retry-delay 2 "${SLANG_URL}" -o /tmp/slang.tar.gz
+          tar -xzf /tmp/slang.tar.gz -C /opt/slang
+          rm -f /tmp/slang.tar.gz
+
+          test -x /opt/slang/bin/slangc
+          /opt/slang/bin/slangc -version
+
+          echo "/opt/slang/bin" >> "$GITHUB_PATH"
+          echo "SLANG_DIR=/opt/slang" >> "$GITHUB_ENV"
+
       - name: Toolchain sanity
         shell: bash
         run: |
@@ -66,6 +82,7 @@ jobs:
           nvcc --version
           command -v glslc && glslc --version
           command -v glslangValidator && glslangValidator --version
+          command -v slangc && slangc -version
 
       - name: Checkout
         uses: actions/checkout@v4

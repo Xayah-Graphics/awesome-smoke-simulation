@@ -1,5 +1,7 @@
 # Awesome Smoke Simulation
 
+[![Arch Build](https://github.com/Xayah-Graphics/awesome-smoke-simulation/actions/workflows/arch-build.yml/badge.svg)](https://github.com/Xayah-Graphics/awesome-smoke-simulation/actions/workflows/arch-build.yml)
+
 #### Classic Eulerian Simulation.
 
 - [x] [SIGGRAPH 1999] [_Stable fluids_](https://dl.acm.org/doi/10.1145/311535.311548). Jos Stam.
