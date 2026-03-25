@@ -105,21 +105,21 @@ namespace {
     };
 
     struct StableStepConfig {
-        int32_t nx                  = 64;
-        int32_t ny                  = 96;
-        int32_t nz                  = 64;
+        int32_t nx                  = 128;
+        int32_t ny                  = 128;
+        int32_t nz                  = 128;
         float dt                    = 1.0f / 90.0f;
         float cell_size             = 1.0f;
         float viscosity             = 0.00015f;
         float diffusion             = 0.00005f;
         int32_t diffuse_iterations  = 24;
         int32_t pressure_iterations = 80;
-        uint32_t boundary_x_min     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
-        uint32_t boundary_x_max     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
-        uint32_t boundary_y_min     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
+        uint32_t boundary_x_min     = STABLE_FLUIDS_BOUNDARY_OUTFLOW;
+        uint32_t boundary_x_max     = STABLE_FLUIDS_BOUNDARY_OUTFLOW;
+        uint32_t boundary_y_min     = STABLE_FLUIDS_BOUNDARY_OUTFLOW;
         uint32_t boundary_y_max     = STABLE_FLUIDS_BOUNDARY_OUTFLOW;
-        uint32_t boundary_z_min     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
-        uint32_t boundary_z_max     = STABLE_FLUIDS_BOUNDARY_NO_SLIP;
+        uint32_t boundary_z_min     = STABLE_FLUIDS_BOUNDARY_OUTFLOW;
+        uint32_t boundary_z_max     = STABLE_FLUIDS_BOUNDARY_OUTFLOW;
         float inflow_velocity_x_min = 0.0f;
         float inflow_velocity_x_max = 0.0f;
         float inflow_velocity_y_min = 1.2f;
@@ -141,9 +141,9 @@ namespace {
         StableStepConfig desc{};
         int selected_field   = 0;
         bool emit_source     = true;
-        float source_radius  = 4.5f;
+        float source_radius  = 3.5f;
         float density_amount = 0.55f;
-        float jet_speed      = 2.6f;
+        float jet_speed      = 500.6f;
         float upward_bias    = 0.20f;
         float corner_inset   = 0.14f;
         float source_height  = 0.10f;
@@ -180,12 +180,12 @@ namespace {
         float temperature_buoyancy   = 0.12f;
         float vorticity_epsilon      = 2.0f;
         int32_t pressure_iterations  = 80;
-        uint32_t boundary_x_min      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
-        uint32_t boundary_x_max      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
-        uint32_t boundary_y_min      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
+        uint32_t boundary_x_min      = VISUAL_SMOKE_BOUNDARY_OUTFLOW;
+        uint32_t boundary_x_max      = VISUAL_SMOKE_BOUNDARY_OUTFLOW;
+        uint32_t boundary_y_min      = VISUAL_SMOKE_BOUNDARY_OUTFLOW;
         uint32_t boundary_y_max      = VISUAL_SMOKE_BOUNDARY_OUTFLOW;
-        uint32_t boundary_z_min      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
-        uint32_t boundary_z_max      = VISUAL_SMOKE_BOUNDARY_NO_SLIP;
+        uint32_t boundary_z_min      = VISUAL_SMOKE_BOUNDARY_OUTFLOW;
+        uint32_t boundary_z_max      = VISUAL_SMOKE_BOUNDARY_OUTFLOW;
         float inflow_velocity_x_min  = 0.0f;
         float inflow_velocity_x_max  = 0.0f;
         float inflow_velocity_y_min  = 1.2f;
@@ -276,7 +276,7 @@ int main() {
     try {
         app::FieldRendererApp renderer;
         PlaybackState playback{};
-        BackendKind backend_kind = BackendKind::VisualSmoke002;
+        BackendKind backend_kind = BackendKind::StableFluids001;
         StableSettings stable_settings{};
         StableRuntime stable_runtime{};
         SolverStats stable_solver_stats{};
