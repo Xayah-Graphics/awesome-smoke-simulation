@@ -21,8 +21,7 @@ export namespace app {
         Density           = 0,
         Temperature       = 1,
         VelocityMagnitude = 2,
-        DyeColor          = 3,
-        GenericScalar     = 4,
+        GenericScalar     = 3,
     };
 
     enum class RenderMode : uint32_t {

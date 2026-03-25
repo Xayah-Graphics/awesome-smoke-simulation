@@ -135,8 +135,7 @@ namespace app {
     }
 
     void FieldRendererApp::draw_renderer_ui(const std::optional<ScalarFieldView>& field) {
-        const bool allow_smoke_mode = field && field->semantic == FieldSemantic::DyeColor;
-        if (!allow_smoke_mode && render_.mode == RenderMode::Smoke) {
+        if (render_.mode == RenderMode::Smoke) {
             render_.mode = RenderMode::Scalar;
         }
 
@@ -146,28 +145,14 @@ namespace app {
         } else {
             ImGui::TextUnformatted("Field: None");
         }
-        if (allow_smoke_mode) {
-            int mode             = static_cast<int>(render_.mode);
-            const char* labels[] = {"Smoke", "Scalar"};
-            if (ImGui::Combo("View Mode", &mode, labels, 2)) {
-                render_.mode = static_cast<RenderMode>(mode);
-            }
-        } else {
-            ImGui::TextUnformatted("View Mode: Scalar");
-        }
+        ImGui::TextUnformatted("View Mode: Scalar");
         ImGui::SliderInt("March Steps", &render_.march_steps, 24, 224);
         ImGui::SliderFloat("Density Scale", &render_.density_scale, 0.05f, 2.0f, "%.2f");
-        if (render_.mode == RenderMode::Smoke) {
-            ImGui::SliderFloat("Absorption", &render_.absorption, 0.05f, 2.0f, "%.2f");
-            ImGui::ColorEdit3("Source A Color", &render_.smoke_left_r);
-            ImGui::ColorEdit3("Source B Color", &render_.smoke_right_r);
-        } else {
-            ImGui::SliderFloat("Value Min", &render_.scalar_min, -2.0f, 8.0f, "%.3f");
-            ImGui::SliderFloat("Value Max", &render_.scalar_max, -2.0f, 8.0f, "%.3f");
-            ImGui::SliderFloat("Opacity", &render_.scalar_opacity, 0.05f, 8.0f, "%.2f");
-            ImGui::ColorEdit3("Low Color", &render_.scalar_low_r);
-            ImGui::ColorEdit3("High Color", &render_.scalar_high_r);
-        }
+        ImGui::SliderFloat("Value Min", &render_.scalar_min, -2.0f, 8.0f, "%.3f");
+        ImGui::SliderFloat("Value Max", &render_.scalar_max, -2.0f, 8.0f, "%.3f");
+        ImGui::SliderFloat("Opacity", &render_.scalar_opacity, 0.05f, 8.0f, "%.2f");
+        ImGui::ColorEdit3("Low Color", &render_.scalar_low_r);
+        ImGui::ColorEdit3("High Color", &render_.scalar_high_r);
         if (field) {
             ImGui::Separator();
             ImGui::Text("Grid: %u x %u x %u", field->nx, field->ny, field->nz);
@@ -260,13 +245,13 @@ namespace app {
                 static_cast<float>(field->nz) * field->cell_size,
                 0.0f,
             };
-            push.color_a = render_.mode == RenderMode::Smoke ? vk::math::vec4{render_.smoke_left_r, render_.smoke_left_g, render_.smoke_left_b, 1.0f} : vk::math::vec4{render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
-            push.color_b = render_.mode == RenderMode::Smoke ? vk::math::vec4{render_.smoke_right_r, render_.smoke_right_g, render_.smoke_right_b, 1.0f} : vk::math::vec4{render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
+            push.color_a = {render_.scalar_low_r, render_.scalar_low_g, render_.scalar_low_b, 1.0f};
+            push.color_b = {render_.scalar_high_r, render_.scalar_high_g, render_.scalar_high_b, 1.0f};
             push.params0 = {
                 static_cast<float>(sc_.extent.width) / static_cast<float>((std::max) (sc_.extent.height, 1u)),
                 half_fov_tan,
                 render_.density_scale,
-                render_.mode == RenderMode::Smoke ? render_.absorption : render_.scalar_opacity,
+                render_.scalar_opacity,
             };
             push.params1 = {
                 field->nx,
@@ -280,7 +265,7 @@ namespace app {
                 0u,
                 0u,
             };
-            push.params3 = render_.mode == RenderMode::Smoke ? vk::math::vec4{} : vk::math::vec4{render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
+            push.params3 = {render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
 
             cmd.bindPipeline(PipelineBindPoint::eGraphics, *smoke_pipeline_.pipeline);
             cmd.bindDescriptorSets(PipelineBindPoint::eGraphics, *smoke_pipeline_.layout, 0, {field->descriptor_set}, {});
