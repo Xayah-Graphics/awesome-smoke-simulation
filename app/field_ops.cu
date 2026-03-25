@@ -7,10 +7,6 @@
 
 namespace {
 
-    int32_t cuda_code(const cudaError_t status) noexcept {
-        return status == cudaSuccess ? 0 : 5001;
-    }
-
     dim3 make_grid(const int nx, const int ny, const int nz, const dim3& block) {
         return dim3(static_cast<unsigned>((nx + static_cast<int>(block.x) - 1) / static_cast<int>(block.x)), static_cast<unsigned>((ny + static_cast<int>(block.y) - 1) / static_cast<int>(block.y)), static_cast<unsigned>((nz + static_cast<int>(block.z) - 1) / static_cast<int>(block.z)));
     }
@@ -135,7 +131,8 @@ int32_t app_add_stable_source_async(void* density, void* velocity_x, void* veloc
     source_u_kernel<<<make_grid(nx + 1, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_x), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_x);
     source_v_kernel<<<make_grid(nx, ny + 1, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_y), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_y);
     source_w_kernel<<<make_grid(nx, ny, nz + 1, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_z), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_z);
-    return cuda_code(cudaGetLastError());
+    if (cudaGetLastError() != cudaSuccess) return 5001;
+    return 0;
 }
 
 int32_t app_add_visual_source_async(void* density, void* temperature, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float temperature_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z,
@@ -154,7 +151,8 @@ int32_t app_add_visual_source_async(void* density, void* temperature, void* velo
     source_u_kernel<<<make_grid(nx + 1, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_x), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_x);
     source_v_kernel<<<make_grid(nx, ny + 1, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_y), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_y);
     source_w_kernel<<<make_grid(nx, ny, nz + 1, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_z), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_z);
-    return cuda_code(cudaGetLastError());
+    if (cudaGetLastError() != cudaSuccess) return 5001;
+    return 0;
 }
 
 int32_t app_compute_staggered_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream) {
@@ -167,5 +165,6 @@ int32_t app_compute_staggered_velocity_magnitude_async(void* destination, void* 
     nvtx3::scoped_range range{"smoke_app.snapshot_velocity_magnitude.staggered"};
     const dim3 block{static_cast<unsigned>(std::max(block_x, 1)), static_cast<unsigned>(std::max(block_y, 1)), static_cast<unsigned>(std::max(block_z, 1))};
     staggered_velocity_magnitude_kernel<<<make_grid(nx, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(destination), static_cast<const float*>(velocity_x), static_cast<const float*>(velocity_y), static_cast<const float*>(velocity_z), nx, ny, nz);
-    return cuda_code(cudaGetLastError());
+    if (cudaGetLastError() != cudaSuccess) return 5001;
+    return 0;
 }
