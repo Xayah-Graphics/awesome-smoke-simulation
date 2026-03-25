@@ -114,13 +114,13 @@ float2 intersect_aabb(float3 rayOrigin, float3 rayDir, float3 boundsMin, float3 
     return float2(entry, exit);
 }
 
-float3 render_smoke(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 background)
+float3 render_smoke(float3 rayOrigin, float3 rayDir, float t0, float t1)
 {
     float distanceInside = t1 - t0;
     uint steps = max(pc.params1.w, 1u);
     float stepLength = distanceInside / steps;
     float transmittance = 1.0;
-    float3 color = background;
+    float3 color = 0.0.xxx;
     [loop]
     for (uint i = 0; i < steps; ++i)
     {
@@ -150,13 +150,13 @@ float3 render_smoke(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 
     return color;
 }
 
-float3 render_scalar(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 background)
+float3 render_scalar(float3 rayOrigin, float3 rayDir, float t0, float t1)
 {
     float distanceInside = t1 - t0;
     uint steps = max(pc.params1.w, 1u);
     float stepLength = distanceInside / steps;
     float transmittance = 1.0;
-    float3 color = background;
+    float3 color = 0.0.xxx;
     float valueMin = pc.params3.x;
     float valueMax = max(pc.params3.y, valueMin + 1.0e-5);
 
@@ -217,19 +217,14 @@ float4 fs_main(VSOut input) : SV_Target
     float t0 = max(hit.x, 0.0);
     float t1 = hit.y;
 
-    float3 skyTop = float3(0.10, 0.12, 0.16);
-    float3 skyBottom = float3(0.035, 0.04, 0.05);
-    float horizon = saturate(0.5 + 0.5 * rayDir.y);
-    float3 background = lerp(skyBottom, skyTop, horizon);
-
     if (t1 <= t0)
     {
-        return float4(background, 1.0);
+        return float4(0.0.xxx, 1.0);
     }
 
     float3 color = pc.params2.x == RENDER_MODE_SMOKE
-        ? render_smoke(rayOrigin, rayDir, t0, t1, background)
-        : render_scalar(rayOrigin, rayDir, t0, t1, background);
+        ? render_smoke(rayOrigin, rayDir, t0, t1)
+        : render_scalar(rayOrigin, rayDir, t0, t1);
 
     return float4(color, 1.0);
 }
