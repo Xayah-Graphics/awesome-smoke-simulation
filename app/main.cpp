@@ -115,6 +115,8 @@ namespace {
         float inflow_scalar_y_max   = 0.0f;
         float inflow_scalar_z_min   = 0.8f;
         float inflow_scalar_z_max   = 0.8f;
+        float ambient_temperature   = 0.0f;
+        float density_buoyancy      = 0.045f;
         int32_t block_x             = 8;
         int32_t block_y             = 8;
         int32_t block_z             = 4;
@@ -314,6 +316,42 @@ int main() {
                 .stream                     = stable_runtime.sim_stream,
             };
 
+            StableFluidsAddForceDesc add_force_desc{
+                .struct_size            = sizeof(StableFluidsAddForceDesc),
+                .api_version            = STABLE_FLUIDS_API_VERSION,
+                .nx                     = stable_settings.desc.nx,
+                .ny                     = stable_settings.desc.ny,
+                .nz                     = stable_settings.desc.nz,
+                .dt                     = stable_settings.desc.dt,
+                .boundary_x_min         = stable_settings.desc.boundary_x_min,
+                .boundary_x_max         = stable_settings.desc.boundary_x_max,
+                .boundary_y_min         = stable_settings.desc.boundary_y_min,
+                .boundary_y_max         = stable_settings.desc.boundary_y_max,
+                .boundary_z_min         = stable_settings.desc.boundary_z_min,
+                .boundary_z_max         = stable_settings.desc.boundary_z_max,
+                .inflow_velocity_x_min  = stable_settings.desc.inflow_velocity_x_min,
+                .inflow_velocity_x_max  = stable_settings.desc.inflow_velocity_x_max,
+                .inflow_velocity_y_min  = stable_settings.desc.inflow_velocity_y_min,
+                .inflow_velocity_y_max  = stable_settings.desc.inflow_velocity_y_max,
+                .inflow_velocity_z_min  = stable_settings.desc.inflow_velocity_z_min,
+                .inflow_velocity_z_max  = stable_settings.desc.inflow_velocity_z_max,
+                .ambient_temperature    = stable_settings.desc.ambient_temperature,
+                .density_buoyancy       = stable_settings.desc.density_buoyancy,
+                .temperature_buoyancy   = 0.0f,
+                .velocity_x             = stable_runtime.velocity_x,
+                .velocity_y             = stable_runtime.velocity_y,
+                .velocity_z             = stable_runtime.velocity_z,
+                .density                = stable_runtime.density,
+                .temperature            = nullptr,
+                .force_x                = nullptr,
+                .force_y                = nullptr,
+                .force_z                = nullptr,
+                .block_x                = stable_settings.desc.block_x,
+                .block_y                = stable_settings.desc.block_y,
+                .block_z                = stable_settings.desc.block_z,
+                .stream                 = stable_runtime.sim_stream,
+            };
+
 
             auto run_scalar_flow = [&](float* scalar, float* temporary, float* temporary_previous, const uint32_t clamp_non_negative, const float inflow_x_min, const float inflow_x_max, const float inflow_y_min, const float inflow_y_max, const float inflow_z_min, const float inflow_z_max) {
                 StableFluidsAdvectScalarDesc scalar_advect{
@@ -384,6 +422,7 @@ int main() {
                 stable_ok(stable_fluids_diffuse_scalar_cuda(&scalar_diffuse), "stable_fluids_diffuse_scalar_cuda");
             };
 
+            stable_ok(stable_fluids_add_force_cuda(&add_force_desc), "stable_fluids_add_force_cuda");
             stable_ok(stable_fluids_advect_velocity_cuda(&advect_velocity_desc), "stable_fluids_advect_velocity_cuda");
             stable_ok(stable_fluids_diffuse_velocity_cuda(&diffuse_velocity_desc), "stable_fluids_diffuse_velocity_cuda");
             stable_ok(stable_fluids_project_cuda(&project_desc), "stable_fluids_project_cuda");
@@ -1118,6 +1157,8 @@ int main() {
                 ImGui::SliderFloat("Inflow Density Y+", &stable_settings.desc.inflow_scalar_y_max, 0.0f, 3.0f, "%.2f");
                 ImGui::SliderFloat("Inflow Density Z-", &stable_settings.desc.inflow_scalar_z_min, 0.0f, 3.0f, "%.2f");
                 ImGui::SliderFloat("Inflow Density Z+", &stable_settings.desc.inflow_scalar_z_max, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Ambient Temp", &stable_settings.desc.ambient_temperature, -2.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Density Buoyancy", &stable_settings.desc.density_buoyancy, 0.0f, 0.30f, "%.4f");
                 ImGui::Separator();
                 ImGui::Checkbox("Emit Source", &stable_settings.emit_source);
                 ImGui::TextUnformatted("Dual corner jets: left-bottom and right-bottom -> center");
