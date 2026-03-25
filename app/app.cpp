@@ -342,8 +342,8 @@ namespace app {
             0.0f,
         };
         camera_state.orbit.distance  = static_cast<float>((std::max) ({field.nx, field.ny, field.nz})) * field.cell_size * 2.15f;
-        camera_state.orbit.yaw_rad   = -0.78539816339f;
-        camera_state.orbit.pitch_rad = -0.43633231299f;
+        camera_state.orbit.yaw_rad   = 0.0f;
+        camera_state.orbit.pitch_rad = 0.0f;
         camera_.set_state(camera_state);
     }
 
