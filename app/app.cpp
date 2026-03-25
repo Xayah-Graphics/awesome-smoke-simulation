@@ -135,7 +135,7 @@ namespace app {
     }
 
     void FieldRendererApp::draw_renderer_ui(const std::optional<ScalarFieldView>& field) {
-        const bool allow_smoke_mode = field && field->semantic == FieldSemantic::Density;
+        const bool allow_smoke_mode = field && field->semantic == FieldSemantic::DyeColor;
         if (!allow_smoke_mode && render_.mode == RenderMode::Smoke) {
             render_.mode = RenderMode::Scalar;
         }
@@ -159,9 +159,8 @@ namespace app {
         ImGui::SliderFloat("Density Scale", &render_.density_scale, 0.05f, 2.0f, "%.2f");
         if (render_.mode == RenderMode::Smoke) {
             ImGui::SliderFloat("Absorption", &render_.absorption, 0.05f, 2.0f, "%.2f");
-            ImGui::SliderFloat("Softness", &render_.smoke_softness, 0.0f, 1.0f, "%.2f");
-            ImGui::ColorEdit3("Smoke Left Color", &render_.smoke_left_r);
-            ImGui::ColorEdit3("Smoke Right Color", &render_.smoke_right_r);
+            ImGui::ColorEdit3("Source A Color", &render_.smoke_left_r);
+            ImGui::ColorEdit3("Source B Color", &render_.smoke_right_r);
         } else {
             ImGui::SliderFloat("Value Min", &render_.scalar_min, -2.0f, 8.0f, "%.3f");
             ImGui::SliderFloat("Value Max", &render_.scalar_max, -2.0f, 8.0f, "%.3f");
@@ -281,9 +280,7 @@ namespace app {
                 0u,
                 0u,
             };
-            push.params3 = render_.mode == RenderMode::Smoke
-                ? vk::math::vec4{0.0f, 0.0f, 0.0f, render_.smoke_softness}
-                : vk::math::vec4{render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
+            push.params3 = render_.mode == RenderMode::Smoke ? vk::math::vec4{} : vk::math::vec4{render_.scalar_min, render_.scalar_max, 0.0f, 0.0f};
 
             cmd.bindPipeline(PipelineBindPoint::eGraphics, *smoke_pipeline_.pipeline);
             cmd.bindDescriptorSets(PipelineBindPoint::eGraphics, *smoke_pipeline_.layout, 0, {field->descriptor_set}, {});

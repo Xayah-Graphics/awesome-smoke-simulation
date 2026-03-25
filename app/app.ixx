@@ -21,7 +21,8 @@ export namespace app {
         Density           = 0,
         Temperature       = 1,
         VelocityMagnitude = 2,
-        GenericScalar     = 3,
+        DyeColor          = 3,
+        GenericScalar     = 4,
     };
 
     enum class RenderMode : uint32_t {
@@ -62,7 +63,6 @@ export namespace app {
         float smoke_right_r   = 0.98f;
         float smoke_right_g   = 0.48f;
         float smoke_right_b   = 0.34f;
-        float smoke_softness  = 0.72f;
         float scalar_min      = 0.0f;
         float scalar_max      = 1.0f;
         float scalar_opacity  = 2.0f;

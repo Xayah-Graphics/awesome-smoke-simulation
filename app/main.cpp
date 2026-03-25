@@ -20,8 +20,9 @@ import vk.memory;
 int32_t app_compute_staggered_velocity_magnitude_async(void* destination, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
 int32_t app_add_stable_source_async(
     void* density, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
-int32_t app_add_visual_source_async(void* density, void* temperature, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float temperature_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z,
+int32_t app_add_visual_source_async(void* density, void* temperature, void* dye_r, void* dye_g, void* dye_b, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float temperature_amount, float dye_r_amount, float dye_g_amount, float dye_b_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z,
     int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
+int32_t app_pack_visual_smoke_rgba_async(void* destination_rgba, void* density, void* dye_r, void* dye_g, void* dye_b, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream);
 
 namespace {
 
@@ -33,9 +34,10 @@ namespace {
     };
 
     enum class FieldId : uint32_t {
-        Density           = 0,
-        Temperature       = 1,
-        VelocityMagnitude = 2,
+        SmokeColor        = 0,
+        Density           = 1,
+        Temperature       = 2,
+        VelocityMagnitude = 3,
     };
 
     struct PlaybackState {
@@ -64,6 +66,7 @@ namespace {
     };
 
     constexpr std::array visual_fields{
+        FieldChoice{FieldId::SmokeColor, "Smoke Color", app::FieldSemantic::DyeColor},
         FieldChoice{FieldId::Density, "Density", app::FieldSemantic::Density},
         FieldChoice{FieldId::Temperature, "Temperature", app::FieldSemantic::Temperature},
         FieldChoice{FieldId::VelocityMagnitude, "Velocity Magnitude", app::FieldSemantic::VelocityMagnitude},
@@ -216,8 +219,9 @@ namespace {
         bool emit_source               = true;
         float source_radius            = 4.0f;
         float density_amount           = 0.22f;
-        float temperature_amount_left  = 0.65f;
-        float temperature_amount_right = 1.45f;
+        float temperature_amount       = 1.05f;
+        float dye_amount_left          = 0.22f;
+        float dye_amount_right         = 0.22f;
         float jet_speed                = 2.35f;
         float upward_bias              = 0.30f;
         float corner_inset             = 0.14f;
@@ -230,11 +234,17 @@ namespace {
         cudaStream_t sim_stream               = nullptr;
         float* density                        = nullptr;
         float* temperature                    = nullptr;
+        float* dye_r                          = nullptr;
+        float* dye_g                          = nullptr;
+        float* dye_b                          = nullptr;
         float* velocity_x                     = nullptr;
         float* velocity_y                     = nullptr;
         float* velocity_z                     = nullptr;
         float* temporary_previous_density     = nullptr;
         float* temporary_previous_temperature = nullptr;
+        float* temporary_previous_dye_r       = nullptr;
+        float* temporary_previous_dye_g       = nullptr;
+        float* temporary_previous_dye_b       = nullptr;
         float* temporary_previous_velocity_x  = nullptr;
         float* temporary_previous_velocity_y  = nullptr;
         float* temporary_previous_velocity_z  = nullptr;
@@ -287,6 +297,7 @@ int main() {
         std::vector<SnapshotSlot> snapshot_slots{};
 
         auto scalar_bytes     = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto rgba_bytes       = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float) * 4ull; };
         auto velocity_x_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
         auto velocity_y_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
         auto velocity_z_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
@@ -598,7 +609,7 @@ int main() {
                 .stream                        = visual_runtime.sim_stream,
             };
 
-            VisualSimulationOfSmokeScalarFlowBinding scalar_bindings[2] = {
+            VisualSimulationOfSmokeScalarFlowBinding scalar_bindings[5] = {
                 VisualSimulationOfSmokeScalarFlowBinding{.scalar = visual_runtime.density,
                     .temporary_previous_scalar = visual_runtime.temporary_previous_density,
                     .clamp_non_negative = 1u,
@@ -619,6 +630,36 @@ int main() {
                     .inflow_scalar_z_min = visual_settings.desc.inflow_temperature_z_min,
                     .inflow_scalar_z_max = visual_settings.desc.inflow_temperature_z_max,
                 },
+                VisualSimulationOfSmokeScalarFlowBinding{.scalar = visual_runtime.dye_r,
+                    .temporary_previous_scalar = visual_runtime.temporary_previous_dye_r,
+                    .clamp_non_negative = 1u,
+                    .inflow_scalar_x_min = 0.0f,
+                    .inflow_scalar_x_max = 0.0f,
+                    .inflow_scalar_y_min = 0.0f,
+                    .inflow_scalar_y_max = 0.0f,
+                    .inflow_scalar_z_min = 0.0f,
+                    .inflow_scalar_z_max = 0.0f,
+                },
+                VisualSimulationOfSmokeScalarFlowBinding{.scalar = visual_runtime.dye_g,
+                    .temporary_previous_scalar = visual_runtime.temporary_previous_dye_g,
+                    .clamp_non_negative = 1u,
+                    .inflow_scalar_x_min = 0.0f,
+                    .inflow_scalar_x_max = 0.0f,
+                    .inflow_scalar_y_min = 0.0f,
+                    .inflow_scalar_y_max = 0.0f,
+                    .inflow_scalar_z_min = 0.0f,
+                    .inflow_scalar_z_max = 0.0f,
+                },
+                VisualSimulationOfSmokeScalarFlowBinding{.scalar = visual_runtime.dye_b,
+                    .temporary_previous_scalar = visual_runtime.temporary_previous_dye_b,
+                    .clamp_non_negative = 1u,
+                    .inflow_scalar_x_min = 0.0f,
+                    .inflow_scalar_x_max = 0.0f,
+                    .inflow_scalar_y_min = 0.0f,
+                    .inflow_scalar_y_max = 0.0f,
+                    .inflow_scalar_z_min = 0.0f,
+                    .inflow_scalar_z_max = 0.0f,
+                },
             };
             VisualSimulationOfSmokeAdvectScalarFlowDesc scalar_flow_desc{
                 .struct_size         = sizeof(VisualSimulationOfSmokeAdvectScalarFlowDesc),
@@ -636,7 +677,7 @@ int main() {
                 .boundary_z_min      = visual_settings.desc.boundary_z_min,
                 .boundary_z_max      = visual_settings.desc.boundary_z_max,
                 .scalar_bindings     = scalar_bindings,
-                .scalar_count        = 2,
+                .scalar_count        = 5,
                 .velocity_x          = visual_runtime.velocity_x,
                 .velocity_y          = visual_runtime.velocity_y,
                 .velocity_z          = visual_runtime.velocity_z,
@@ -680,7 +721,7 @@ int main() {
 
         auto apply_field_defaults = [&](const FieldChoice& field) {
             auto& render = renderer.render_settings();
-            if (field.id == FieldId::Density) {
+            if (field.id == FieldId::SmokeColor) {
                 render.mode           = app::RenderMode::Smoke;
                 render.march_steps    = 96;
                 render.density_scale  = 0.52f;
@@ -691,7 +732,17 @@ int main() {
                 render.smoke_right_r  = 0.98f;
                 render.smoke_right_g  = 0.48f;
                 render.smoke_right_b  = 0.34f;
-                render.smoke_softness = 0.72f;
+            } else if (field.id == FieldId::Density) {
+                render.mode           = app::RenderMode::Scalar;
+                render.scalar_min     = 0.0f;
+                render.scalar_max     = 1.0f;
+                render.scalar_opacity = 1.6f;
+                render.scalar_low_r   = 0.06f;
+                render.scalar_low_g   = 0.08f;
+                render.scalar_low_b   = 0.10f;
+                render.scalar_high_r  = 0.88f;
+                render.scalar_high_g  = 0.90f;
+                render.scalar_high_b  = 0.92f;
             } else if (field.id == FieldId::Temperature) {
                 render.mode           = app::RenderMode::Scalar;
                 render.scalar_min     = 0.0f;
@@ -729,7 +780,7 @@ int main() {
             const float source_y = ny * visual_settings.source_height;
             const float source_z = nz * visual_settings.source_depth;
 
-            auto emit_one = [&](const float source_x, const float temperature_amount) {
+            auto emit_one = [&](const float source_x, const float dye_amount, const float color_r, const float color_g, const float color_b) {
                 const float dir_x      = center_x - source_x;
                 const float dir_y      = center_y - source_y;
                 const float dir_z      = center_z - source_z;
@@ -737,13 +788,14 @@ int main() {
                 const float velocity_x = dir_x * inv_len * visual_settings.jet_speed;
                 const float velocity_y = dir_y * inv_len * visual_settings.jet_speed + visual_settings.upward_bias;
                 const float velocity_z = dir_z * inv_len * visual_settings.jet_speed;
-                smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, source_x, source_y, source_z, visual_settings.source_radius, visual_settings.density_amount,
-                             temperature_amount, velocity_x, velocity_y, velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
+                smoke_ok(app_add_visual_source_async(visual_runtime.density, visual_runtime.temperature, visual_runtime.dye_r, visual_runtime.dye_g, visual_runtime.dye_b, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz, source_x, source_y, source_z, visual_settings.source_radius, visual_settings.density_amount,
+                             visual_settings.temperature_amount, dye_amount * color_r, dye_amount * color_g, dye_amount * color_b, velocity_x, velocity_y, velocity_z, visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
                     "app_add_visual_source_async");
             };
 
-            emit_one(left_x, visual_settings.temperature_amount_left);
-            emit_one(right_x, visual_settings.temperature_amount_right);
+            const auto& render = renderer.render_settings();
+            emit_one(left_x, visual_settings.dye_amount_left, render.smoke_left_r, render.smoke_left_g, render.smoke_left_b);
+            emit_one(right_x, visual_settings.dye_amount_right, render.smoke_right_r, render.smoke_right_g, render.smoke_right_b);
         };
 
         auto inject_stable_dual_sources = [&]() {
@@ -878,11 +930,17 @@ int main() {
             };
             release(visual_runtime.density);
             release(visual_runtime.temperature);
+            release(visual_runtime.dye_r);
+            release(visual_runtime.dye_g);
+            release(visual_runtime.dye_b);
             release(visual_runtime.velocity_x);
             release(visual_runtime.velocity_y);
             release(visual_runtime.velocity_z);
             release(visual_runtime.temporary_previous_density);
             release(visual_runtime.temporary_previous_temperature);
+            release(visual_runtime.temporary_previous_dye_r);
+            release(visual_runtime.temporary_previous_dye_g);
+            release(visual_runtime.temporary_previous_dye_b);
             release(visual_runtime.temporary_previous_velocity_x);
             release(visual_runtime.temporary_previous_velocity_y);
             release(visual_runtime.temporary_previous_velocity_z);
@@ -902,11 +960,17 @@ int main() {
             visual_runtime.device_allocated               = false;
             visual_runtime.density                        = nullptr;
             visual_runtime.temperature                    = nullptr;
+            visual_runtime.dye_r                          = nullptr;
+            visual_runtime.dye_g                          = nullptr;
+            visual_runtime.dye_b                          = nullptr;
             visual_runtime.velocity_x                     = nullptr;
             visual_runtime.velocity_y                     = nullptr;
             visual_runtime.velocity_z                     = nullptr;
             visual_runtime.temporary_previous_density     = nullptr;
             visual_runtime.temporary_previous_temperature = nullptr;
+            visual_runtime.temporary_previous_dye_r       = nullptr;
+            visual_runtime.temporary_previous_dye_g       = nullptr;
+            visual_runtime.temporary_previous_dye_b       = nullptr;
             visual_runtime.temporary_previous_velocity_x  = nullptr;
             visual_runtime.temporary_previous_velocity_y  = nullptr;
             visual_runtime.temporary_previous_velocity_z  = nullptr;
@@ -1109,10 +1173,15 @@ int main() {
                         "app_compute_staggered_velocity_magnitude_async");
                 }
             } else {
-                if (field.id == FieldId::Density) {
-                    cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.density, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual density snapshot");
+                const auto visual_scalar_bytes = scalar_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                if (field.id == FieldId::SmokeColor) {
+                    smoke_ok(app_pack_visual_smoke_rgba_async(
+                                 slot.cuda_ptr, visual_runtime.density, visual_runtime.dye_r, visual_runtime.dye_g, visual_runtime.dye_b, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
+                        "app_pack_visual_smoke_rgba_async");
+                } else if (field.id == FieldId::Density) {
+                    cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.density, visual_scalar_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual density snapshot");
                 } else if (field.id == FieldId::Temperature) {
-                    cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temperature, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual temperature snapshot");
+                    cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, visual_runtime.temperature, visual_scalar_bytes, cudaMemcpyDeviceToDevice, visual_runtime.sim_stream), "cudaMemcpyAsync visual temperature snapshot");
                 } else {
                     smoke_ok(app_compute_staggered_velocity_magnitude_async(
                                  slot.cuda_ptr, visual_runtime.velocity_x, visual_runtime.velocity_y, visual_runtime.velocity_z, static_cast<int32_t>(grid.nx), static_cast<int32_t>(grid.ny), static_cast<int32_t>(grid.nz), visual_settings.desc.block_x, visual_settings.desc.block_y, visual_settings.desc.block_z, visual_runtime.sim_stream),
@@ -1177,31 +1246,38 @@ int main() {
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc stable temporary_pressure");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc stable temporary_divergence");
             } else {
-                viewer_runtime.field_bytes         = scalar_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                viewer_runtime.field_bytes         = rgba_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_x_bytes = velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_y_bytes = velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 const auto visual_velocity_z_bytes = velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
                 visual_runtime.device_allocated    = true;
                 cuda_ok(cudaStreamCreateWithFlags(&visual_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags visual_stream");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.density), viewer_runtime.field_bytes), "cudaMalloc visual density");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temperature), viewer_runtime.field_bytes), "cudaMalloc visual temperature");
+                const auto visual_scalar_bytes = scalar_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.density), visual_scalar_bytes), "cudaMalloc visual density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temperature), visual_scalar_bytes), "cudaMalloc visual temperature");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.dye_r), visual_scalar_bytes), "cudaMalloc visual dye_r");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.dye_g), visual_scalar_bytes), "cudaMalloc visual dye_g");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.dye_b), visual_scalar_bytes), "cudaMalloc visual dye_b");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_x), visual_velocity_x_bytes), "cudaMalloc visual velocity_x");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_y), visual_velocity_y_bytes), "cudaMalloc visual velocity_y");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.velocity_z), visual_velocity_z_bytes), "cudaMalloc visual velocity_z");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_density), viewer_runtime.field_bytes), "cudaMalloc visual temporary_previous_density");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_temperature), viewer_runtime.field_bytes), "cudaMalloc visual temporary_previous_temperature");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_density), visual_scalar_bytes), "cudaMalloc visual temporary_previous_density");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_temperature), visual_scalar_bytes), "cudaMalloc visual temporary_previous_temperature");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_dye_r), visual_scalar_bytes), "cudaMalloc visual temporary_previous_dye_r");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_dye_g), visual_scalar_bytes), "cudaMalloc visual temporary_previous_dye_g");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_dye_b), visual_scalar_bytes), "cudaMalloc visual temporary_previous_dye_b");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_x), visual_velocity_x_bytes), "cudaMalloc visual temporary_previous_velocity_x");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_y), visual_velocity_y_bytes), "cudaMalloc visual temporary_previous_velocity_y");
                 cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_previous_velocity_z), visual_velocity_z_bytes), "cudaMalloc visual temporary_previous_velocity_z");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc visual temporary_pressure");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc visual temporary_divergence");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_x), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_x");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_y), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_y");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_z), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_z");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_magnitude), viewer_runtime.field_bytes), "cudaMalloc visual temporary_omega_magnitude");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_x), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_x");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_y), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_y");
-                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_z), viewer_runtime.field_bytes), "cudaMalloc visual temporary_force_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_pressure), visual_scalar_bytes), "cudaMalloc visual temporary_pressure");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_divergence), visual_scalar_bytes), "cudaMalloc visual temporary_divergence");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_x), visual_scalar_bytes), "cudaMalloc visual temporary_omega_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_y), visual_scalar_bytes), "cudaMalloc visual temporary_omega_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_z), visual_scalar_bytes), "cudaMalloc visual temporary_omega_z");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_omega_magnitude), visual_scalar_bytes), "cudaMalloc visual temporary_omega_magnitude");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_x), visual_scalar_bytes), "cudaMalloc visual temporary_force_x");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_y), visual_scalar_bytes), "cudaMalloc visual temporary_force_y");
+                cuda_ok(cudaMalloc(reinterpret_cast<void**>(&visual_runtime.temporary_force_z), visual_scalar_bytes), "cudaMalloc visual temporary_force_z");
             }
 
             create_snapshot_slots();
@@ -1216,8 +1292,12 @@ int main() {
                     run_stable_step();
                 }
             } else {
-                cuda_ok(cudaMemsetAsync(visual_runtime.density, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual density");
-                cuda_ok(cudaMemsetAsync(visual_runtime.temperature, 0, viewer_runtime.field_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual temperature");
+                const auto visual_scalar_bytes = scalar_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz);
+                cuda_ok(cudaMemsetAsync(visual_runtime.density, 0, visual_scalar_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual density");
+                cuda_ok(cudaMemsetAsync(visual_runtime.temperature, 0, visual_scalar_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual temperature");
+                cuda_ok(cudaMemsetAsync(visual_runtime.dye_r, 0, visual_scalar_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual dye_r");
+                cuda_ok(cudaMemsetAsync(visual_runtime.dye_g, 0, visual_scalar_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual dye_g");
+                cuda_ok(cudaMemsetAsync(visual_runtime.dye_b, 0, visual_scalar_bytes, visual_runtime.sim_stream), "cudaMemsetAsync visual dye_b");
                 cuda_ok(cudaMemsetAsync(visual_runtime.velocity_x, 0, velocity_x_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_x");
                 cuda_ok(cudaMemsetAsync(visual_runtime.velocity_y, 0, velocity_y_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_y");
                 cuda_ok(cudaMemsetAsync(visual_runtime.velocity_z, 0, velocity_z_bytes(visual_settings.desc.nx, visual_settings.desc.ny, visual_settings.desc.nz), visual_runtime.sim_stream), "cudaMemsetAsync visual velocity_z");
@@ -1459,8 +1539,9 @@ int main() {
                 ImGui::SliderFloat("Source Depth", &visual_settings.source_depth, 0.04f, 0.32f, "%.2f");
                 ImGui::SliderFloat("Source Radius", &visual_settings.source_radius, 1.0f, 16.0f, "%.1f");
                 ImGui::SliderFloat("Density Amount", &visual_settings.density_amount, 0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Temp Left", &visual_settings.temperature_amount_left, 0.0f, 3.0f, "%.2f");
-                ImGui::SliderFloat("Temp Right", &visual_settings.temperature_amount_right, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Temperature Amount", &visual_settings.temperature_amount, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Dye Amount Left", &visual_settings.dye_amount_left, 0.0f, 1.5f, "%.2f");
+                ImGui::SliderFloat("Dye Amount Right", &visual_settings.dye_amount_right, 0.0f, 1.5f, "%.2f");
                 ImGui::SliderFloat("Jet Speed", &visual_settings.jet_speed, 0.2f, 5.0f, "%.2f");
                 ImGui::SliderFloat("Upward Bias", &visual_settings.upward_bias, -1.0f, 2.0f, "%.2f");
             }

@@ -50,7 +50,7 @@ namespace {
         destination[index_3d(x, y, z, nx, ny)] = sqrtf(vx * vx + vy * vy + vz * vz);
     }
 
-    __global__ void visual_source_cells_kernel(float* density, float* temperature, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float temperature_amount) {
+    __global__ void visual_source_cells_kernel(float* density, float* temperature, float* dye_r, float* dye_g, float* dye_b, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float temperature_amount, const float dye_r_amount, const float dye_g_amount, const float dye_b_amount) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -67,6 +67,23 @@ namespace {
         const float weight = fmaxf(0.0f, 1.0f - dist2 / radius2);
         density[index] += density_amount * weight;
         temperature[index] += temperature_amount * weight;
+        dye_r[index] += dye_r_amount * weight;
+        dye_g[index] += dye_g_amount * weight;
+        dye_b[index] += dye_b_amount * weight;
+    }
+
+    __global__ void pack_smoke_rgba_kernel(float* destination_rgba, const float* density, const float* dye_r, const float* dye_g, const float* dye_b, const int nx, const int ny, const int nz) {
+        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+        if (x >= nx || y >= ny || z >= nz) return;
+
+        const auto index = index_3d(x, y, z, nx, ny);
+        const auto base  = static_cast<std::uint64_t>(4) * index;
+        destination_rgba[base + 0] = density[index];
+        destination_rgba[base + 1] = dye_r[index];
+        destination_rgba[base + 2] = dye_g[index];
+        destination_rgba[base + 3] = dye_b[index];
     }
 
     __global__ void source_u_kernel(float* velocity_x, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float amount) {
@@ -135,22 +152,35 @@ int32_t app_add_stable_source_async(
     return 0;
 }
 
-int32_t app_add_visual_source_async(void* density, void* temperature, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float temperature_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z,
+int32_t app_add_visual_source_async(void* density, void* temperature, void* dye_r, void* dye_g, void* dye_b, void* velocity_x, void* velocity_y, void* velocity_z, int32_t nx, int32_t ny, int32_t nz, float center_x, float center_y, float center_z, float radius, float density_amount, float temperature_amount, float dye_r_amount, float dye_g_amount, float dye_b_amount, float velocity_source_x, float velocity_source_y, float velocity_source_z,
     int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream) {
     if (nx <= 0 || ny <= 0 || nz <= 0) return 1001;
     if (radius <= 0.0f) return 1005;
     if (density == nullptr) return 2001;
     if (temperature == nullptr) return 2002;
+    if (dye_r == nullptr || dye_g == nullptr || dye_b == nullptr) return 2006;
     if (velocity_x == nullptr) return 2003;
     if (velocity_y == nullptr) return 2004;
     if (velocity_z == nullptr) return 2005;
 
     nvtx3::scoped_range range{"smoke_app.add_visual_source"};
     const dim3 block{static_cast<unsigned>(std::max(block_x, 1)), static_cast<unsigned>(std::max(block_y, 1)), static_cast<unsigned>(std::max(block_z, 1))};
-    visual_source_cells_kernel<<<make_grid(nx, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(density), static_cast<float*>(temperature), nx, ny, nz, center_x, center_y, center_z, radius, density_amount, temperature_amount);
+    visual_source_cells_kernel<<<make_grid(nx, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(density), static_cast<float*>(temperature), static_cast<float*>(dye_r), static_cast<float*>(dye_g), static_cast<float*>(dye_b), nx, ny, nz, center_x, center_y, center_z, radius, density_amount, temperature_amount, dye_r_amount, dye_g_amount, dye_b_amount);
     source_u_kernel<<<make_grid(nx + 1, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_x), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_x);
     source_v_kernel<<<make_grid(nx, ny + 1, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_y), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_y);
     source_w_kernel<<<make_grid(nx, ny, nz + 1, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(velocity_z), nx, ny, nz, center_x, center_y, center_z, radius, velocity_source_z);
+    if (cudaGetLastError() != cudaSuccess) return 5001;
+    return 0;
+}
+
+int32_t app_pack_visual_smoke_rgba_async(void* destination_rgba, void* density, void* dye_r, void* dye_g, void* dye_b, int32_t nx, int32_t ny, int32_t nz, int32_t block_x, int32_t block_y, int32_t block_z, void* cuda_stream) {
+    if (nx <= 0 || ny <= 0 || nz <= 0) return 1001;
+    if (destination_rgba == nullptr) return 2001;
+    if (density == nullptr || dye_r == nullptr || dye_g == nullptr || dye_b == nullptr) return 2002;
+
+    nvtx3::scoped_range range{"smoke_app.snapshot_visual_smoke_rgba"};
+    const dim3 block{static_cast<unsigned>(std::max(block_x, 1)), static_cast<unsigned>(std::max(block_y, 1)), static_cast<unsigned>(std::max(block_z, 1))};
+    pack_smoke_rgba_kernel<<<make_grid(nx, ny, nz, block), block, 0, reinterpret_cast<cudaStream_t>(cuda_stream)>>>(static_cast<float*>(destination_rgba), static_cast<const float*>(density), static_cast<const float*>(dye_r), static_cast<const float*>(dye_g), static_cast<const float*>(dye_b), nx, ny, nz);
     if (cudaGetLastError() != cudaSuccess) return 5001;
     return 0;
 }
