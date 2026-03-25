@@ -218,10 +218,10 @@ namespace {
         int selected_field             = 0;
         bool emit_source               = true;
         float source_radius            = 4.0f;
-        float density_amount           = 0.22f;
+        float density_amount           = 0.34f;
         float temperature_amount       = 1.05f;
-        float dye_amount_left          = 0.22f;
-        float dye_amount_right         = 0.22f;
+        float dye_amount_left          = 0.60f;
+        float dye_amount_right         = 0.60f;
         float jet_speed                = 2.35f;
         float upward_bias              = 0.30f;
         float corner_inset             = 0.14f;
@@ -724,14 +724,14 @@ int main() {
             if (field.id == FieldId::SmokeColor) {
                 render.mode           = app::RenderMode::Smoke;
                 render.march_steps    = 96;
-                render.density_scale  = 0.52f;
-                render.absorption     = 0.78f;
-                render.smoke_left_r   = 0.33f;
-                render.smoke_left_g   = 0.72f;
-                render.smoke_left_b   = 0.97f;
-                render.smoke_right_r  = 0.98f;
-                render.smoke_right_g  = 0.48f;
-                render.smoke_right_b  = 0.34f;
+                render.density_scale  = 0.95f;
+                render.absorption     = 1.20f;
+                render.smoke_left_r   = 1.00f;
+                render.smoke_left_g   = 0.20f;
+                render.smoke_left_b   = 0.72f;
+                render.smoke_right_r  = 0.12f;
+                render.smoke_right_g  = 0.38f;
+                render.smoke_right_b  = 1.00f;
             } else if (field.id == FieldId::Density) {
                 render.mode           = app::RenderMode::Scalar;
                 render.scalar_min     = 0.0f;

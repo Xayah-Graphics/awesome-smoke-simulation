@@ -54,15 +54,15 @@ export namespace app {
 
     struct RenderSettings {
         RenderMode mode       = RenderMode::Smoke;
-        int march_steps       = 88;
-        float density_scale   = 0.52f;
-        float absorption      = 0.78f;
-        float smoke_left_r    = 0.33f;
-        float smoke_left_g    = 0.72f;
-        float smoke_left_b    = 0.97f;
-        float smoke_right_r   = 0.98f;
-        float smoke_right_g   = 0.48f;
-        float smoke_right_b   = 0.34f;
+        int march_steps       = 96;
+        float density_scale   = 0.95f;
+        float absorption      = 1.20f;
+        float smoke_left_r    = 1.00f;
+        float smoke_left_g    = 0.20f;
+        float smoke_left_b    = 0.72f;
+        float smoke_right_r   = 0.12f;
+        float smoke_right_g   = 0.38f;
+        float smoke_right_b   = 1.00f;
         float scalar_min      = 0.0f;
         float scalar_max      = 1.0f;
         float scalar_opacity  = 2.0f;
