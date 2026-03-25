@@ -127,14 +127,13 @@ namespace {
         StableStepConfig desc{};
         int selected_field   = 0;
         bool emit_source     = true;
-        float source_u       = 0.5f;
-        float source_v       = 0.18f;
-        float source_w       = 0.5f;
-        float source_radius  = 5.0f;
-        float density_amount = 0.85f;
-        float velocity_x     = 0.0f;
-        float velocity_y     = 1.2f;
-        float velocity_z     = 0.0f;
+        float source_radius  = 4.5f;
+        float density_amount = 0.55f;
+        float jet_speed      = 2.6f;
+        float upward_bias    = 0.20f;
+        float corner_inset   = 0.14f;
+        float source_height  = 0.10f;
+        float source_depth   = 0.14f;
     };
 
     struct StableRuntime {
@@ -610,6 +609,35 @@ int main() {
             emit_one(right_x, visual_settings.temperature_amount_right);
         };
 
+        auto inject_stable_dual_sources = [&]() {
+            const auto nx = static_cast<float>(stable_settings.desc.nx);
+            const auto ny = static_cast<float>(stable_settings.desc.ny);
+            const auto nz = static_cast<float>(stable_settings.desc.nz);
+            const float center_x = nx * 0.5f;
+            const float center_y = ny * 0.52f;
+            const float center_z = nz * 0.5f;
+            const float left_x = nx * stable_settings.corner_inset;
+            const float right_x = nx * (1.0f - stable_settings.corner_inset);
+            const float source_y = ny * stable_settings.source_height;
+            const float source_z = nz * stable_settings.source_depth;
+
+            auto emit_one = [&](const float source_x) {
+                const float dir_x = center_x - source_x;
+                const float dir_y = center_y - source_y;
+                const float dir_z = center_z - source_z;
+                const float inv_len = 1.0f / (std::sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z) + 1.0e-6f);
+                const float velocity_x = dir_x * inv_len * stable_settings.jet_speed;
+                const float velocity_y = dir_y * inv_len * stable_settings.jet_speed + stable_settings.upward_bias;
+                const float velocity_z = dir_z * inv_len * stable_settings.jet_speed;
+                stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, source_x, source_y, source_z, stable_settings.source_radius,
+                              stable_settings.density_amount, velocity_x, velocity_y, velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
+                    "app_add_stable_source_async");
+            };
+
+            emit_one(left_x);
+            emit_one(right_x);
+        };
+
         auto active_snapshot = [&]() -> std::optional<app::ScalarFieldView> {
             if (viewer_runtime.active_snapshot_slot < 0) {
                 return std::nullopt;
@@ -1024,12 +1052,7 @@ int main() {
                 cuda_ok(cudaMemsetAsync(stable_runtime.velocity_y, 0, velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_y");
                 cuda_ok(cudaMemsetAsync(stable_runtime.velocity_z, 0, velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_z");
                 if (stable_settings.emit_source) {
-                    const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
-                    const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
-                    const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                    stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount, stable_settings.velocity_x,
-                                  stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
-                        "app_add_stable_source_async");
+                    inject_stable_dual_sources();
                     run_stable_step();
                 }
             } else {
@@ -1190,14 +1213,14 @@ int main() {
                 draw_boundary_combo("Boundary Z+", stable_settings.desc.boundary_z_max);
                 ImGui::Separator();
                 ImGui::Checkbox("Emit Source", &stable_settings.emit_source);
-                ImGui::SliderFloat("Source U", &stable_settings.source_u, 0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Source V", &stable_settings.source_v, 0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Source W", &stable_settings.source_w, 0.0f, 1.0f, "%.2f");
+                ImGui::TextUnformatted("Dual corner jets: left-bottom and right-bottom -> center");
+                ImGui::SliderFloat("Corner Inset", &stable_settings.corner_inset, 0.04f, 0.32f, "%.2f");
+                ImGui::SliderFloat("Source Height", &stable_settings.source_height, 0.03f, 0.24f, "%.2f");
+                ImGui::SliderFloat("Source Depth", &stable_settings.source_depth, 0.04f, 0.32f, "%.2f");
                 ImGui::SliderFloat("Source Radius", &stable_settings.source_radius, 1.0f, 16.0f, "%.1f");
-                ImGui::SliderFloat("Density Amount", &stable_settings.density_amount, 0.0f, 12.0f, "%.2f");
-                ImGui::SliderFloat("Velocity X", &stable_settings.velocity_x, -4.0f, 4.0f, "%.2f");
-                ImGui::SliderFloat("Velocity Y", &stable_settings.velocity_y, -4.0f, 4.0f, "%.2f");
-                ImGui::SliderFloat("Velocity Z", &stable_settings.velocity_z, -4.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Density Amount", &stable_settings.density_amount, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Jet Speed", &stable_settings.jet_speed, 0.2f, 6.0f, "%.2f");
+                ImGui::SliderFloat("Upward Bias", &stable_settings.upward_bias, -1.0f, 2.0f, "%.2f");
             } else {
                 ImGui::TextUnformatted("Backend Parameters: 002-visual-simulation-of-smoke");
                 if (ImGui::SliderInt("Grid X", &visual_settings.desc.nx, 16, 192)) reset_requested = true;
@@ -1246,12 +1269,7 @@ int main() {
                         if (backend_kind == BackendKind::StableFluids001) {
                             if (stable_settings.emit_source) {
                                 nvtx3::scoped_range range{"smoke_app.simulation.add_source"};
-                                const float center_x = stable_settings.source_u * static_cast<float>(stable_settings.desc.nx);
-                                const float center_y = stable_settings.source_v * static_cast<float>(stable_settings.desc.ny);
-                                const float center_z = stable_settings.source_w * static_cast<float>(stable_settings.desc.nz);
-                                stable_ok(app_add_stable_source_async(stable_runtime.density, stable_runtime.velocity_x, stable_runtime.velocity_y, stable_runtime.velocity_z, stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz, center_x, center_y, center_z, stable_settings.source_radius, stable_settings.density_amount,
-                                              stable_settings.velocity_x, stable_settings.velocity_y, stable_settings.velocity_z, stable_settings.desc.block_x, stable_settings.desc.block_y, stable_settings.desc.block_z, stable_runtime.sim_stream),
-                                    "app_add_stable_source_async");
+                                inject_stable_dual_sources();
                             }
                             {
                                 nvtx3::scoped_range range{"smoke_app.simulation.step"};
