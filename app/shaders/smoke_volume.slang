@@ -135,8 +135,7 @@ float3 render_smoke(float3 rayOrigin, float3 rayDir, float t0, float t1, float3 
         }
 
         float3 dyeRgb = max(sampleData.yzw, 0.0.xxx);
-        float dyeMagnitude = dyeRgb.x + dyeRgb.y + dyeRgb.z;
-        float3 sampleColor = dyeMagnitude > 1.0e-6 ? saturate(dyeRgb / dyeMagnitude) : pc.colorA.rgb;
+        float3 sampleColor = saturate(dyeRgb / max(sampleData.x, 1.0e-6));
 
         float alpha = 1.0 - exp(-density * pc.params0.w * stepLength);
         color += transmittance * alpha * sampleColor;

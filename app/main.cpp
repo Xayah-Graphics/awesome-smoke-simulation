@@ -21,8 +21,9 @@ namespace {
     constexpr uint32_t snapshot_slot_count = 4;
 
     enum class FieldId : uint32_t {
-        Density           = 0,
-        VelocityMagnitude = 1,
+        SmokeColor        = 0,
+        Density           = 1,
+        VelocityMagnitude = 2,
     };
 
     struct PlaybackState {
@@ -39,6 +40,7 @@ namespace {
     };
 
     constexpr std::array stable_fields{
+        FieldChoice{FieldId::SmokeColor, "Smoke Color", app::FieldSemantic::DyeColor},
         FieldChoice{FieldId::Density, "Density", app::FieldSemantic::Density},
         FieldChoice{FieldId::VelocityMagnitude, "Velocity Magnitude", app::FieldSemantic::VelocityMagnitude},
     };
@@ -124,6 +126,13 @@ namespace {
         bool emit_source     = true;
         float source_radius  = 3.5f;
         float density_amount = 0.55f;
+        float dye_amount     = 0.65f;
+        float source_a_r     = 1.00f;
+        float source_a_g     = 0.20f;
+        float source_a_b     = 0.72f;
+        float source_b_r     = 0.12f;
+        float source_b_g     = 0.38f;
+        float source_b_b     = 1.00f;
         float jet_speed      = 500.6f;
         float upward_bias    = 0.20f;
         float corner_inset   = 0.14f;
@@ -135,14 +144,23 @@ namespace {
         bool device_allocated                = false;
         cudaStream_t sim_stream              = nullptr;
         float* density                       = nullptr;
+        float* dye_r                         = nullptr;
+        float* dye_g                         = nullptr;
+        float* dye_b                         = nullptr;
         float* velocity_x                    = nullptr;
         float* velocity_y                    = nullptr;
         float* velocity_z                    = nullptr;
         float* temporary_density             = nullptr;
+        float* temporary_dye_r               = nullptr;
+        float* temporary_dye_g               = nullptr;
+        float* temporary_dye_b               = nullptr;
         float* temporary_velocity_x          = nullptr;
         float* temporary_velocity_y          = nullptr;
         float* temporary_velocity_z          = nullptr;
         float* temporary_previous_density    = nullptr;
+        float* temporary_previous_dye_r      = nullptr;
+        float* temporary_previous_dye_g      = nullptr;
+        float* temporary_previous_dye_b      = nullptr;
         float* temporary_previous_velocity_x = nullptr;
         float* temporary_previous_velocity_y = nullptr;
         float* temporary_previous_velocity_z = nullptr;
@@ -177,6 +195,7 @@ int main() {
         std::vector<SnapshotSlot> snapshot_slots{};
 
         auto scalar_bytes     = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
+        auto rgba_bytes       = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float) * 4ull; };
         auto velocity_x_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx + 1) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz) * sizeof(float); };
         auto velocity_y_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny + 1) * static_cast<uint64_t>(nz) * sizeof(float); };
         auto velocity_z_bytes = [](const int32_t nx, const int32_t ny, const int32_t nz) { return static_cast<uint64_t>(nx) * static_cast<uint64_t>(ny) * static_cast<uint64_t>(nz + 1) * sizeof(float); };
@@ -305,77 +324,83 @@ int main() {
                 .stream                     = stable_runtime.sim_stream,
             };
 
-            StableFluidsAdvectScalarDesc advect_scalar_desc{
-                .struct_size               = sizeof(StableFluidsAdvectScalarDesc),
-                .api_version               = STABLE_FLUIDS_API_VERSION,
-                .nx                        = stable_settings.desc.nx,
-                .ny                        = stable_settings.desc.ny,
-                .nz                        = stable_settings.desc.nz,
-                .cell_size                 = stable_settings.desc.cell_size,
-                .dt                        = stable_settings.desc.dt,
-                .boundary_x_min            = stable_settings.desc.boundary_x_min,
-                .boundary_x_max            = stable_settings.desc.boundary_x_max,
-                .boundary_y_min            = stable_settings.desc.boundary_y_min,
-                .boundary_y_max            = stable_settings.desc.boundary_y_max,
-                .boundary_z_min            = stable_settings.desc.boundary_z_min,
-                .boundary_z_max            = stable_settings.desc.boundary_z_max,
-                .inflow_scalar_x_min       = stable_settings.desc.inflow_scalar_x_min,
-                .inflow_scalar_x_max       = stable_settings.desc.inflow_scalar_x_max,
-                .inflow_scalar_y_min       = stable_settings.desc.inflow_scalar_y_min,
-                .inflow_scalar_y_max       = stable_settings.desc.inflow_scalar_y_max,
-                .inflow_scalar_z_min       = stable_settings.desc.inflow_scalar_z_min,
-                .inflow_scalar_z_max       = stable_settings.desc.inflow_scalar_z_max,
-                .scalar                    = stable_runtime.density,
-                .temporary_scalar          = stable_runtime.temporary_density,
-                .temporary_previous_scalar = stable_runtime.temporary_previous_density,
-                .velocity_x                = stable_runtime.velocity_x,
-                .velocity_y                = stable_runtime.velocity_y,
-                .velocity_z                = stable_runtime.velocity_z,
-                .clamp_non_negative        = 1u,
-                .block_x                   = stable_settings.desc.block_x,
-                .block_y                   = stable_settings.desc.block_y,
-                .block_z                   = stable_settings.desc.block_z,
-                .stream                    = stable_runtime.sim_stream,
-            };
 
-            StableFluidsDiffuseScalarDesc diffuse_scalar_desc{
-                .struct_size                = sizeof(StableFluidsDiffuseScalarDesc),
-                .api_version                = STABLE_FLUIDS_API_VERSION,
-                .nx                         = stable_settings.desc.nx,
-                .ny                         = stable_settings.desc.ny,
-                .nz                         = stable_settings.desc.nz,
-                .cell_size                  = stable_settings.desc.cell_size,
-                .dt                         = stable_settings.desc.dt,
-                .diffusion                  = stable_settings.desc.diffusion,
-                .diffuse_iterations         = stable_settings.desc.diffuse_iterations,
-                .boundary_x_min             = stable_settings.desc.boundary_x_min,
-                .boundary_x_max             = stable_settings.desc.boundary_x_max,
-                .boundary_y_min             = stable_settings.desc.boundary_y_min,
-                .boundary_y_max             = stable_settings.desc.boundary_y_max,
-                .boundary_z_min             = stable_settings.desc.boundary_z_min,
-                .boundary_z_max             = stable_settings.desc.boundary_z_max,
-                .inflow_scalar_x_min       = stable_settings.desc.inflow_scalar_x_min,
-                .inflow_scalar_x_max       = stable_settings.desc.inflow_scalar_x_max,
-                .inflow_scalar_y_min       = stable_settings.desc.inflow_scalar_y_min,
-                .inflow_scalar_y_max       = stable_settings.desc.inflow_scalar_y_max,
-                .inflow_scalar_z_min       = stable_settings.desc.inflow_scalar_z_min,
-                .inflow_scalar_z_max       = stable_settings.desc.inflow_scalar_z_max,
-                .scalar                     = stable_runtime.density,
-                .temporary_scalar           = stable_runtime.temporary_density,
-                .temporary_solution_storage = stable_runtime.temporary_pressure,
-                .temporary_rhs_storage      = stable_runtime.temporary_divergence,
-                .clamp_non_negative         = 1u,
-                .block_x                    = stable_settings.desc.block_x,
-                .block_y                    = stable_settings.desc.block_y,
-                .block_z                    = stable_settings.desc.block_z,
-                .stream                     = stable_runtime.sim_stream,
+            auto run_scalar_flow = [&](float* scalar, float* temporary, float* temporary_previous, const uint32_t clamp_non_negative, const float inflow_x_min, const float inflow_x_max, const float inflow_y_min, const float inflow_y_max, const float inflow_z_min, const float inflow_z_max) {
+                StableFluidsAdvectScalarDesc scalar_advect{
+                    .struct_size               = sizeof(StableFluidsAdvectScalarDesc),
+                    .api_version               = STABLE_FLUIDS_API_VERSION,
+                    .nx                        = stable_settings.desc.nx,
+                    .ny                        = stable_settings.desc.ny,
+                    .nz                        = stable_settings.desc.nz,
+                    .cell_size                 = stable_settings.desc.cell_size,
+                    .dt                        = stable_settings.desc.dt,
+                    .boundary_x_min            = stable_settings.desc.boundary_x_min,
+                    .boundary_x_max            = stable_settings.desc.boundary_x_max,
+                    .boundary_y_min            = stable_settings.desc.boundary_y_min,
+                    .boundary_y_max            = stable_settings.desc.boundary_y_max,
+                    .boundary_z_min            = stable_settings.desc.boundary_z_min,
+                    .boundary_z_max            = stable_settings.desc.boundary_z_max,
+                    .inflow_scalar_x_min       = inflow_x_min,
+                    .inflow_scalar_x_max       = inflow_x_max,
+                    .inflow_scalar_y_min       = inflow_y_min,
+                    .inflow_scalar_y_max       = inflow_y_max,
+                    .inflow_scalar_z_min       = inflow_z_min,
+                    .inflow_scalar_z_max       = inflow_z_max,
+                    .scalar                    = scalar,
+                    .temporary_scalar          = temporary,
+                    .temporary_previous_scalar = temporary_previous,
+                    .velocity_x                = stable_runtime.velocity_x,
+                    .velocity_y                = stable_runtime.velocity_y,
+                    .velocity_z                = stable_runtime.velocity_z,
+                    .clamp_non_negative        = clamp_non_negative,
+                    .block_x                   = stable_settings.desc.block_x,
+                    .block_y                   = stable_settings.desc.block_y,
+                    .block_z                   = stable_settings.desc.block_z,
+                    .stream                    = stable_runtime.sim_stream,
+                };
+                StableFluidsDiffuseScalarDesc scalar_diffuse{
+                    .struct_size                = sizeof(StableFluidsDiffuseScalarDesc),
+                    .api_version                = STABLE_FLUIDS_API_VERSION,
+                    .nx                         = stable_settings.desc.nx,
+                    .ny                         = stable_settings.desc.ny,
+                    .nz                         = stable_settings.desc.nz,
+                    .cell_size                  = stable_settings.desc.cell_size,
+                    .dt                         = stable_settings.desc.dt,
+                    .diffusion                  = stable_settings.desc.diffusion,
+                    .diffuse_iterations         = stable_settings.desc.diffuse_iterations,
+                    .boundary_x_min             = stable_settings.desc.boundary_x_min,
+                    .boundary_x_max             = stable_settings.desc.boundary_x_max,
+                    .boundary_y_min             = stable_settings.desc.boundary_y_min,
+                    .boundary_y_max             = stable_settings.desc.boundary_y_max,
+                    .boundary_z_min             = stable_settings.desc.boundary_z_min,
+                    .boundary_z_max             = stable_settings.desc.boundary_z_max,
+                    .inflow_scalar_x_min        = inflow_x_min,
+                    .inflow_scalar_x_max        = inflow_x_max,
+                    .inflow_scalar_y_min        = inflow_y_min,
+                    .inflow_scalar_y_max        = inflow_y_max,
+                    .inflow_scalar_z_min        = inflow_z_min,
+                    .inflow_scalar_z_max        = inflow_z_max,
+                    .scalar                     = scalar,
+                    .temporary_scalar           = temporary,
+                    .temporary_solution_storage = stable_runtime.temporary_pressure,
+                    .temporary_rhs_storage      = stable_runtime.temporary_divergence,
+                    .clamp_non_negative         = clamp_non_negative,
+                    .block_x                    = stable_settings.desc.block_x,
+                    .block_y                    = stable_settings.desc.block_y,
+                    .block_z                    = stable_settings.desc.block_z,
+                    .stream                     = stable_runtime.sim_stream,
+                };
+                stable_ok(stable_fluids_advect_scalar_cuda(&scalar_advect), "stable_fluids_advect_scalar_cuda");
+                stable_ok(stable_fluids_diffuse_scalar_cuda(&scalar_diffuse), "stable_fluids_diffuse_scalar_cuda");
             };
 
             stable_ok(stable_fluids_advect_velocity_cuda(&advect_velocity_desc), "stable_fluids_advect_velocity_cuda");
             stable_ok(stable_fluids_diffuse_velocity_cuda(&diffuse_velocity_desc), "stable_fluids_diffuse_velocity_cuda");
             stable_ok(stable_fluids_project_cuda(&project_desc), "stable_fluids_project_cuda");
-            stable_ok(stable_fluids_advect_scalar_cuda(&advect_scalar_desc), "stable_fluids_advect_scalar_cuda");
-            stable_ok(stable_fluids_diffuse_scalar_cuda(&diffuse_scalar_desc), "stable_fluids_diffuse_scalar_cuda");
+            run_scalar_flow(stable_runtime.density, stable_runtime.temporary_density, stable_runtime.temporary_previous_density, 1u, stable_settings.desc.inflow_scalar_x_min, stable_settings.desc.inflow_scalar_x_max, stable_settings.desc.inflow_scalar_y_min, stable_settings.desc.inflow_scalar_y_max, stable_settings.desc.inflow_scalar_z_min, stable_settings.desc.inflow_scalar_z_max);
+            run_scalar_flow(stable_runtime.dye_r, stable_runtime.temporary_dye_r, stable_runtime.temporary_previous_dye_r, 1u, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+            run_scalar_flow(stable_runtime.dye_g, stable_runtime.temporary_dye_g, stable_runtime.temporary_previous_dye_g, 1u, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+            run_scalar_flow(stable_runtime.dye_b, stable_runtime.temporary_dye_b, stable_runtime.temporary_previous_dye_b, 1u, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
         };
 
 
@@ -397,28 +422,33 @@ int main() {
 
         auto apply_field_defaults = [&](const FieldChoice& field) {
             auto& render = renderer.render_settings();
-            if (field.id == FieldId::Density) {
+            if (field.id == FieldId::SmokeColor) {
+                render.mode         = app::RenderMode::Smoke;
+                render.march_steps  = 96;
+                render.density_scale = 0.95f;
+                render.absorption   = 1.20f;
+            } else if (field.id == FieldId::Density) {
                 render.mode           = app::RenderMode::Scalar;
                 render.scalar_min     = 0.0f;
-                render.scalar_max     = 1.0f;
-                render.scalar_opacity = 1.6f;
-                render.scalar_low_r   = 0.06f;
+                render.scalar_max     = 0.70f;
+                render.scalar_opacity = 2.1f;
+                render.scalar_low_r   = 0.10f;
                 render.scalar_low_g   = 0.08f;
-                render.scalar_low_b   = 0.10f;
-                render.scalar_high_r  = 0.88f;
-                render.scalar_high_g  = 0.90f;
-                render.scalar_high_b  = 0.92f;
+                render.scalar_low_b   = 0.30f;
+                render.scalar_high_r  = 1.00f;
+                render.scalar_high_g  = 0.24f;
+                render.scalar_high_b  = 0.74f;
             } else {
                 render.mode           = app::RenderMode::Scalar;
                 render.scalar_min     = 0.0f;
                 render.scalar_max     = 3.0f;
                 render.scalar_opacity = 1.35f;
-                render.scalar_low_r   = 0.04f;
-                render.scalar_low_g   = 0.18f;
-                render.scalar_low_b   = 0.36f;
-                render.scalar_high_r  = 0.74f;
-                render.scalar_high_g  = 0.94f;
-                render.scalar_high_b  = 0.96f;
+                render.scalar_low_r   = 0.06f;
+                render.scalar_low_g   = 0.10f;
+                render.scalar_low_b   = 0.42f;
+                render.scalar_high_r  = 0.18f;
+                render.scalar_high_g  = 0.88f;
+                render.scalar_high_b  = 1.00f;
             }
         };
 
@@ -435,7 +465,7 @@ int main() {
             const float source_y = ny * stable_settings.source_height;
             const float source_z = nz * stable_settings.source_depth;
 
-            auto emit_one = [&](const float source_x) {
+            auto emit_one = [&](const float source_x, const float color_r, const float color_g, const float color_b) {
                 const float dir_x      = center_x - source_x;
                 const float dir_y      = center_y - source_y;
                 const float dir_z      = center_z - source_z;
@@ -455,6 +485,66 @@ int main() {
                     .center_z         = source_z,
                     .radius           = stable_settings.source_radius,
                     .amount           = stable_settings.density_amount,
+                    .sample_offset_x  = 0.5f,
+                    .sample_offset_y  = 0.5f,
+                    .sample_offset_z  = 0.5f,
+                    .block_x          = stable_settings.desc.block_x,
+                    .block_y          = stable_settings.desc.block_y,
+                    .block_z          = stable_settings.desc.block_z,
+                    .stream           = stable_runtime.sim_stream,
+                };
+                StableFluidsAddScalarSourceDesc dye_r_source_desc{
+                    .struct_size      = sizeof(StableFluidsAddScalarSourceDesc),
+                    .api_version      = STABLE_FLUIDS_API_VERSION,
+                    .nx               = stable_settings.desc.nx,
+                    .ny               = stable_settings.desc.ny,
+                    .nz               = stable_settings.desc.nz,
+                    .scalar           = stable_runtime.dye_r,
+                    .center_x         = source_x,
+                    .center_y         = source_y,
+                    .center_z         = source_z,
+                    .radius           = stable_settings.source_radius,
+                    .amount           = stable_settings.dye_amount * color_r,
+                    .sample_offset_x  = 0.5f,
+                    .sample_offset_y  = 0.5f,
+                    .sample_offset_z  = 0.5f,
+                    .block_x          = stable_settings.desc.block_x,
+                    .block_y          = stable_settings.desc.block_y,
+                    .block_z          = stable_settings.desc.block_z,
+                    .stream           = stable_runtime.sim_stream,
+                };
+                StableFluidsAddScalarSourceDesc dye_g_source_desc{
+                    .struct_size      = sizeof(StableFluidsAddScalarSourceDesc),
+                    .api_version      = STABLE_FLUIDS_API_VERSION,
+                    .nx               = stable_settings.desc.nx,
+                    .ny               = stable_settings.desc.ny,
+                    .nz               = stable_settings.desc.nz,
+                    .scalar           = stable_runtime.dye_g,
+                    .center_x         = source_x,
+                    .center_y         = source_y,
+                    .center_z         = source_z,
+                    .radius           = stable_settings.source_radius,
+                    .amount           = stable_settings.dye_amount * color_g,
+                    .sample_offset_x  = 0.5f,
+                    .sample_offset_y  = 0.5f,
+                    .sample_offset_z  = 0.5f,
+                    .block_x          = stable_settings.desc.block_x,
+                    .block_y          = stable_settings.desc.block_y,
+                    .block_z          = stable_settings.desc.block_z,
+                    .stream           = stable_runtime.sim_stream,
+                };
+                StableFluidsAddScalarSourceDesc dye_b_source_desc{
+                    .struct_size      = sizeof(StableFluidsAddScalarSourceDesc),
+                    .api_version      = STABLE_FLUIDS_API_VERSION,
+                    .nx               = stable_settings.desc.nx,
+                    .ny               = stable_settings.desc.ny,
+                    .nz               = stable_settings.desc.nz,
+                    .scalar           = stable_runtime.dye_b,
+                    .center_x         = source_x,
+                    .center_y         = source_y,
+                    .center_z         = source_z,
+                    .radius           = stable_settings.source_radius,
+                    .amount           = stable_settings.dye_amount * color_b,
                     .sample_offset_x  = 0.5f,
                     .sample_offset_y  = 0.5f,
                     .sample_offset_z  = 0.5f,
@@ -485,11 +575,14 @@ int main() {
                     .stream           = stable_runtime.sim_stream,
                 };
                 stable_ok(stable_fluids_add_scalar_source_cuda(&scalar_source_desc), "stable_fluids_add_scalar_source_cuda");
+                stable_ok(stable_fluids_add_scalar_source_cuda(&dye_r_source_desc), "stable_fluids_add_scalar_source_cuda dye_r");
+                stable_ok(stable_fluids_add_scalar_source_cuda(&dye_g_source_desc), "stable_fluids_add_scalar_source_cuda dye_g");
+                stable_ok(stable_fluids_add_scalar_source_cuda(&dye_b_source_desc), "stable_fluids_add_scalar_source_cuda dye_b");
                 stable_ok(stable_fluids_add_vector_source_cuda(&vector_source_desc), "stable_fluids_add_vector_source_cuda");
             };
 
-            emit_one(left_x);
-            emit_one(right_x);
+            emit_one(left_x, stable_settings.source_a_r, stable_settings.source_a_g, stable_settings.source_a_b);
+            emit_one(right_x, stable_settings.source_b_r, stable_settings.source_b_g, stable_settings.source_b_b);
         };
 
         auto active_snapshot = [&]() -> std::optional<app::ScalarFieldView> {
@@ -551,14 +644,23 @@ int main() {
                 ptr = nullptr;
             };
             release(stable_runtime.density);
+            release(stable_runtime.dye_r);
+            release(stable_runtime.dye_g);
+            release(stable_runtime.dye_b);
             release(stable_runtime.velocity_x);
             release(stable_runtime.velocity_y);
             release(stable_runtime.velocity_z);
             release(stable_runtime.temporary_density);
+            release(stable_runtime.temporary_dye_r);
+            release(stable_runtime.temporary_dye_g);
+            release(stable_runtime.temporary_dye_b);
             release(stable_runtime.temporary_velocity_x);
             release(stable_runtime.temporary_velocity_y);
             release(stable_runtime.temporary_velocity_z);
             release(stable_runtime.temporary_previous_density);
+            release(stable_runtime.temporary_previous_dye_r);
+            release(stable_runtime.temporary_previous_dye_g);
+            release(stable_runtime.temporary_previous_dye_b);
             release(stable_runtime.temporary_previous_velocity_x);
             release(stable_runtime.temporary_previous_velocity_y);
             release(stable_runtime.temporary_previous_velocity_z);
@@ -570,14 +672,23 @@ int main() {
             }
             stable_runtime.device_allocated              = false;
             stable_runtime.density                       = nullptr;
+            stable_runtime.dye_r                         = nullptr;
+            stable_runtime.dye_g                         = nullptr;
+            stable_runtime.dye_b                         = nullptr;
             stable_runtime.velocity_x                    = nullptr;
             stable_runtime.velocity_y                    = nullptr;
             stable_runtime.velocity_z                    = nullptr;
             stable_runtime.temporary_density             = nullptr;
+            stable_runtime.temporary_dye_r               = nullptr;
+            stable_runtime.temporary_dye_g               = nullptr;
+            stable_runtime.temporary_dye_b               = nullptr;
             stable_runtime.temporary_velocity_x          = nullptr;
             stable_runtime.temporary_velocity_y          = nullptr;
             stable_runtime.temporary_velocity_z          = nullptr;
             stable_runtime.temporary_previous_density    = nullptr;
+            stable_runtime.temporary_previous_dye_r      = nullptr;
+            stable_runtime.temporary_previous_dye_g      = nullptr;
+            stable_runtime.temporary_previous_dye_b      = nullptr;
             stable_runtime.temporary_previous_velocity_x = nullptr;
             stable_runtime.temporary_previous_velocity_y = nullptr;
             stable_runtime.temporary_previous_velocity_z = nullptr;
@@ -763,8 +874,26 @@ int main() {
             const auto& field = current_field();
             const auto grid   = current_grid();
 
-            if (field.id == FieldId::Density) {
-                cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, viewer_runtime.field_bytes, cudaMemcpyDeviceToDevice, stable_runtime.sim_stream), "cudaMemcpyAsync stable density snapshot");
+            if (field.id == FieldId::SmokeColor) {
+                StableFluidsPackSmokeRgbaDesc pack_desc{
+                    .struct_size = sizeof(StableFluidsPackSmokeRgbaDesc),
+                    .api_version = STABLE_FLUIDS_API_VERSION,
+                    .nx = static_cast<int32_t>(grid.nx),
+                    .ny = static_cast<int32_t>(grid.ny),
+                    .nz = static_cast<int32_t>(grid.nz),
+                    .destination_rgba = slot.cuda_ptr,
+                    .density = stable_runtime.density,
+                    .dye_r = stable_runtime.dye_r,
+                    .dye_g = stable_runtime.dye_g,
+                    .dye_b = stable_runtime.dye_b,
+                    .block_x = stable_settings.desc.block_x,
+                    .block_y = stable_settings.desc.block_y,
+                    .block_z = stable_settings.desc.block_z,
+                    .stream = stable_runtime.sim_stream,
+                };
+                stable_ok(stable_fluids_pack_smoke_rgba_cuda(&pack_desc), "stable_fluids_pack_smoke_rgba_cuda");
+            } else if (field.id == FieldId::Density) {
+                cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), cudaMemcpyDeviceToDevice, stable_runtime.sim_stream), "cudaMemcpyAsync stable density snapshot");
             } else {
                 StableFluidsComputeStaggeredVelocityMagnitudeDesc magnitude_desc{
                     .struct_size = sizeof(StableFluidsComputeStaggeredVelocityMagnitudeDesc),
@@ -819,30 +948,43 @@ int main() {
             destroy_everything();
             current_solver_stats() = {};
 
-            viewer_runtime.field_bytes         = scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
+            viewer_runtime.field_bytes         = rgba_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
+            const auto stable_scalar_bytes     = scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
             const auto stable_velocity_x_bytes = velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
             const auto stable_velocity_y_bytes = velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
             const auto stable_velocity_z_bytes = velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
             stable_runtime.device_allocated    = true;
             cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), viewer_runtime.field_bytes), "cudaMalloc stable density");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), stable_scalar_bytes), "cudaMalloc stable density");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_r), stable_scalar_bytes), "cudaMalloc stable dye_r");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_g), stable_scalar_bytes), "cudaMalloc stable dye_g");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_b), stable_scalar_bytes), "cudaMalloc stable dye_b");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), stable_velocity_x_bytes), "cudaMalloc stable velocity_x");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), stable_velocity_y_bytes), "cudaMalloc stable velocity_y");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), stable_velocity_z_bytes), "cudaMalloc stable velocity_z");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_density), viewer_runtime.field_bytes), "cudaMalloc stable temporary_density");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_density), stable_scalar_bytes), "cudaMalloc stable temporary_density");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_r), stable_scalar_bytes), "cudaMalloc stable temporary_dye_r");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_g), stable_scalar_bytes), "cudaMalloc stable temporary_dye_g");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_b), stable_scalar_bytes), "cudaMalloc stable temporary_dye_b");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_velocity_x");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_velocity_y");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_velocity_z");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_density), viewer_runtime.field_bytes), "cudaMalloc stable temporary_previous_density");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_density), stable_scalar_bytes), "cudaMalloc stable temporary_previous_density");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_r), stable_scalar_bytes), "cudaMalloc stable temporary_previous_dye_r");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_g), stable_scalar_bytes), "cudaMalloc stable temporary_previous_dye_g");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_b), stable_scalar_bytes), "cudaMalloc stable temporary_previous_dye_b");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_previous_velocity_x");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_previous_velocity_y");
             cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_previous_velocity_z");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), viewer_runtime.field_bytes), "cudaMalloc stable temporary_pressure");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), viewer_runtime.field_bytes), "cudaMalloc stable temporary_divergence");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), stable_scalar_bytes), "cudaMalloc stable temporary_pressure");
+            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), stable_scalar_bytes), "cudaMalloc stable temporary_divergence");
 
             create_snapshot_slots();
 
-            cuda_ok(cudaMemsetAsync(stable_runtime.density, 0, viewer_runtime.field_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable density");
+            cuda_ok(cudaMemsetAsync(stable_runtime.density, 0, stable_scalar_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable density");
+            cuda_ok(cudaMemsetAsync(stable_runtime.dye_r, 0, stable_scalar_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable dye_r");
+            cuda_ok(cudaMemsetAsync(stable_runtime.dye_g, 0, stable_scalar_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable dye_g");
+            cuda_ok(cudaMemsetAsync(stable_runtime.dye_b, 0, stable_scalar_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable dye_b");
             cuda_ok(cudaMemsetAsync(stable_runtime.velocity_x, 0, velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_x");
             cuda_ok(cudaMemsetAsync(stable_runtime.velocity_y, 0, velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_y");
             cuda_ok(cudaMemsetAsync(stable_runtime.velocity_z, 0, velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_z");
@@ -994,6 +1136,9 @@ int main() {
                 ImGui::SliderFloat("Source Depth", &stable_settings.source_depth, 0.04f, 0.32f, "%.2f");
                 ImGui::SliderFloat("Source Radius", &stable_settings.source_radius, 1.0f, 16.0f, "%.1f");
                 ImGui::SliderFloat("Density Amount", &stable_settings.density_amount, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Dye Amount", &stable_settings.dye_amount, 0.0f, 2.0f, "%.2f");
+                ImGui::ColorEdit3("Source A Dye", &stable_settings.source_a_r);
+                ImGui::ColorEdit3("Source B Dye", &stable_settings.source_b_r);
                 ImGui::SliderFloat("Jet Speed", &stable_settings.jet_speed, 0.2f, 6.0f, "%.2f");
                 ImGui::SliderFloat("Upward Bias", &stable_settings.upward_bias, -1.0f, 2.0f, "%.2f");
 

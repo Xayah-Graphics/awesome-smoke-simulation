@@ -21,7 +21,8 @@ export namespace app {
         Density           = 0,
         Temperature       = 1,
         VelocityMagnitude = 2,
-        GenericScalar     = 3,
+        DyeColor          = 3,
+        GenericScalar     = 4,
     };
 
     enum class RenderMode : uint32_t {
@@ -56,12 +57,6 @@ export namespace app {
         int march_steps       = 96;
         float density_scale   = 0.95f;
         float absorption      = 1.20f;
-        float smoke_left_r    = 1.00f;
-        float smoke_left_g    = 0.20f;
-        float smoke_left_b    = 0.72f;
-        float smoke_right_r   = 0.12f;
-        float smoke_right_g   = 0.38f;
-        float smoke_right_b   = 1.00f;
         float scalar_min      = 0.0f;
         float scalar_max      = 1.0f;
         float scalar_opacity  = 2.0f;
