@@ -21,9 +21,119 @@ namespace smoke {
             throw std::runtime_error(std::string(what) + " failed (" + std::to_string(static_cast<int>(code)) + ")");
         }
 
+        [[nodiscard]] Settings make_settings_for_preset(const ScenePreset preset) {
+            Settings settings{};
+            settings.scene_preset = preset;
+            settings.config.domain_boundary = {
+                .x_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_VELOCITY_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .x_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_VELOCITY_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .y_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_VELOCITY_BOUNDARY_NO_SLIP), .velocity = 0.0f, },
+                .y_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_VELOCITY_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .z_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_VELOCITY_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .z_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_VELOCITY_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+            };
+            settings.density_diffusion = 0.00005f;
+            settings.dye_diffusion = 0.00003f;
+            settings.density_buoyancy = 0.35f;
+            settings.emit_source = true;
+            settings.collider = {
+                .enabled = true,
+                .type = 0,
+                .center_x = 0.50f,
+                .center_y = 0.50f,
+                .center_z = 0.50f,
+                .radius = 0.25f,
+                .half_extent_x = 0.10f,
+                .half_extent_y = 0.08f,
+                .half_extent_z = 0.10f,
+                .velocity_x = 0.0f,
+                .velocity_y = 0.0f,
+                .velocity_z = 0.0f,
+                .boundary = static_cast<uint32_t>(STABLE_FLUIDS_VELOCITY_BOUNDARY_NO_SLIP),
+            };
+
+            if (preset == ScenePreset::SmokePlume) {
+                settings.config.dt = 1.0f / 120.0f;
+                settings.config.pressure_iterations = 96;
+                settings.density_diffusion = 0.00002f;
+                settings.dye_diffusion = 0.00001f;
+                settings.density_buoyancy = 0.95f;
+                settings.collider.enabled = false;
+                settings.emitter_a = {
+                    .enabled = true,
+                    .position_x = 0.50f,
+                    .position_y = 0.08f,
+                    .position_z = 0.50f,
+                    .direction_x = 0.0f,
+                    .direction_y = 1.0f,
+                    .direction_z = 0.0f,
+                    .speed = 18.0f,
+                    .radius_cells = 2.5f,
+                    .density_amount = 0.95f,
+                    .dye_amount = 0.20f,
+                    .color_r = 0.92f,
+                    .color_g = 0.92f,
+                    .color_b = 0.92f,
+                };
+                settings.emitter_b = {
+                    .enabled = false,
+                    .position_x = 0.50f,
+                    .position_y = 0.08f,
+                    .position_z = 0.50f,
+                    .direction_x = 0.0f,
+                    .direction_y = 1.0f,
+                    .direction_z = 0.0f,
+                    .speed = 0.0f,
+                    .radius_cells = 2.5f,
+                    .density_amount = 0.0f,
+                    .dye_amount = 0.0f,
+                    .color_r = 1.0f,
+                    .color_g = 1.0f,
+                    .color_b = 1.0f,
+                };
+                return settings;
+            }
+
+            settings.scene_preset = ScenePreset::DualJetCollider;
+            settings.emitter_a = {
+                .enabled = true,
+                .position_x = 0.16f,
+                .position_y = 0.12f,
+                .position_z = 0.78f,
+                .direction_x = 0.57f,
+                .direction_y = 0.64f,
+                .direction_z = -0.52f,
+                .speed = 52.0f,
+                .radius_cells = 3.5f,
+                .density_amount = 0.55f,
+                .dye_amount = 0.65f,
+                .color_r = 1.00f,
+                .color_g = 0.20f,
+                .color_b = 0.72f,
+            };
+            settings.emitter_b = {
+                .enabled = true,
+                .position_x = 0.84f,
+                .position_y = 0.12f,
+                .position_z = 0.22f,
+                .direction_x = -0.57f,
+                .direction_y = 0.64f,
+                .direction_z = 0.52f,
+                .speed = 52.0f,
+                .radius_cells = 3.5f,
+                .density_amount = 0.55f,
+                .dye_amount = 0.65f,
+                .color_r = 0.12f,
+                .color_g = 0.38f,
+                .color_b = 1.00f,
+            };
+            return settings;
+        }
+
     } // namespace
 
     StableSimulation::StableSimulation() {
+        settings_ = make_settings_for_preset(ScenePreset::DualJetCollider);
         check_cuda(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking));
         rebuild();
     }
@@ -47,6 +157,16 @@ namespace smoke {
 
     cudaStream_t StableSimulation::stream() const {
         return stream_;
+    }
+
+    ScenePreset StableSimulation::scene_preset() const {
+        return settings_.scene_preset;
+    }
+
+    void StableSimulation::apply_scene_preset(const ScenePreset preset) {
+        const int selected_field = settings_.selected_field;
+        settings_ = make_settings_for_preset(preset);
+        settings_.selected_field = selected_field;
     }
 
     void StableSimulation::rebuild() {
@@ -135,74 +255,59 @@ namespace smoke {
 
     void StableSimulation::step(const int sim_steps) {
         const auto nx = static_cast<float>(settings_.config.nx);
-        const auto ny = static_cast<float>(settings_.config.ny);
-        const auto nz = static_cast<float>(settings_.config.nz);
         const auto h = settings_.config.cell_size;
-        const float focus_x = settings_.focus_x * nx;
-        const float focus_y = settings_.focus_y * ny;
-        const float focus_z = settings_.focus_z * nz;
-        const auto make_source = [&](const float source_x, const float source_y, const float source_z, const float color_r, const float color_g, const float color_b) {
-            const float dir_x = focus_x - source_x;
-            const float dir_y = focus_y - source_y;
-            const float dir_z = focus_z - source_z;
-            const float inv_len = 1.0f / (std::sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z) + 1.0e-6f);
-            return std::pair{
-                StableFluidsVelocitySourceDesc{
-                    .center_x = source_x * h,
-                    .center_y = source_y * h,
-                    .center_z = source_z * h,
-                    .radius = settings_.source_radius * h,
-                    .velocity_x = dir_x * inv_len * settings_.jet_speed,
-                    .velocity_y = dir_y * inv_len * settings_.jet_speed + settings_.upward_bias,
-                    .velocity_z = dir_z * inv_len * settings_.jet_speed,
-                },
-                std::array{
-                    StableFluidsFieldSourceDesc{
-                        .field = density_field_,
-                        .center_x = source_x * h,
-                        .center_y = source_y * h,
-                        .center_z = source_z * h,
-                        .radius = settings_.source_radius * h,
-                        .value_0 = settings_.density_amount,
-                        .value_1 = 0.0f,
-                        .value_2 = 0.0f,
-                        .value_3 = 0.0f,
-                    },
-                    StableFluidsFieldSourceDesc{
-                        .field = dye_field_,
-                        .center_x = source_x * h,
-                        .center_y = source_y * h,
-                        .center_z = source_z * h,
-                        .radius = settings_.source_radius * h,
-                        .value_0 = settings_.dye_amount * color_r,
-                        .value_1 = settings_.dye_amount * color_g,
-                        .value_2 = settings_.dye_amount * color_b,
-                        .value_3 = 0.0f,
-                    },
-                },
+        std::array<StableFluidsVelocitySourceDesc, 2> velocity_sources{};
+        std::array<StableFluidsFieldSourceDesc, 4> field_sources{};
+        uint32_t velocity_source_count = 0;
+        uint32_t field_source_count = 0;
+        const auto append_emitter = [&](const SourceEmitterSettings& emitter) {
+            if (!emitter.enabled) return;
+            const float dir_len = std::sqrt(emitter.direction_x * emitter.direction_x + emitter.direction_y * emitter.direction_y + emitter.direction_z * emitter.direction_z);
+            const float inv_len = dir_len > 1.0e-5f ? 1.0f / dir_len : 1.0f;
+            const float dir_x = dir_len > 1.0e-5f ? emitter.direction_x * inv_len : 0.0f;
+            const float dir_y = dir_len > 1.0e-5f ? emitter.direction_y * inv_len : 1.0f;
+            const float dir_z = dir_len > 1.0e-5f ? emitter.direction_z * inv_len : 0.0f;
+            velocity_sources[velocity_source_count++] = {
+                .center_x = emitter.position_x * nx * h,
+                .center_y = emitter.position_y * static_cast<float>(settings_.config.ny) * h,
+                .center_z = emitter.position_z * static_cast<float>(settings_.config.nz) * h,
+                .radius = emitter.radius_cells * h,
+                .velocity_x = dir_x * emitter.speed,
+                .velocity_y = dir_y * emitter.speed,
+                .velocity_z = dir_z * emitter.speed,
+            };
+            field_sources[field_source_count++] = {
+                .field = density_field_,
+                .center_x = emitter.position_x * nx * h,
+                .center_y = emitter.position_y * static_cast<float>(settings_.config.ny) * h,
+                .center_z = emitter.position_z * static_cast<float>(settings_.config.nz) * h,
+                .radius = emitter.radius_cells * h,
+                .value_0 = emitter.density_amount,
+                .value_1 = 0.0f,
+                .value_2 = 0.0f,
+                .value_3 = 0.0f,
+            };
+            field_sources[field_source_count++] = {
+                .field = dye_field_,
+                .center_x = emitter.position_x * nx * h,
+                .center_y = emitter.position_y * static_cast<float>(settings_.config.ny) * h,
+                .center_z = emitter.position_z * static_cast<float>(settings_.config.nz) * h,
+                .radius = emitter.radius_cells * h,
+                .value_0 = emitter.dye_amount * emitter.color_r,
+                .value_1 = emitter.dye_amount * emitter.color_g,
+                .value_2 = emitter.dye_amount * emitter.color_b,
+                .value_3 = 0.0f,
             };
         };
-        const std::array sources{
-            make_source(settings_.source_a_x * nx, settings_.source_a_y * ny, settings_.source_a_z * nz, settings_.source_a_r, settings_.source_a_g, settings_.source_a_b),
-            make_source(settings_.source_b_x * nx, settings_.source_b_y * ny, settings_.source_b_z * nz, settings_.source_b_r, settings_.source_b_g, settings_.source_b_b),
-        };
-        const std::array velocity_sources{
-            sources[0].first,
-            sources[1].first,
-        };
-        const std::array field_sources{
-            sources[0].second[0],
-            sources[0].second[1],
-            sources[1].second[0],
-            sources[1].second[1],
-        };
+        append_emitter(settings_.emitter_a);
+        append_emitter(settings_.emitter_b);
 
         for (int step_index = 0; step_index < sim_steps; ++step_index) {
             StableFluidsStepDesc step_desc{
                 .velocity_sources = settings_.emit_source ? velocity_sources.data() : nullptr,
-                .velocity_source_count = settings_.emit_source ? static_cast<uint32_t>(velocity_sources.size()) : 0u,
+                .velocity_source_count = settings_.emit_source ? velocity_source_count : 0u,
                 .field_sources = settings_.emit_source ? field_sources.data() : nullptr,
-                .field_source_count = settings_.emit_source ? static_cast<uint32_t>(field_sources.size()) : 0u,
+                .field_source_count = settings_.emit_source ? field_source_count : 0u,
             };
             const auto begin = std::chrono::steady_clock::now();
             check_stable(stable_fluids_step_cuda(context_, &step_desc), "stable_fluids_step_cuda");

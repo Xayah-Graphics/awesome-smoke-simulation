@@ -53,6 +53,12 @@ namespace {
         "Box",
     };
 
+    constexpr std::array scene_preset_labels{
+        "Dual Jet Collider",
+        "Smoke Plume",
+        "Custom",
+    };
+
     struct ViewerRuntime {
         uint64_t field_bytes          = 0;
         uint64_t snapshot_generation  = 0;
@@ -385,6 +391,13 @@ int main() {
             bool field_changed = false;
             ImGui::Begin("Simulation");
             auto& settings = simulation.settings();
+            auto mark_scene_custom = [&]() {
+                if (settings.scene_preset != smoke::ScenePreset::Custom) settings.scene_preset = smoke::ScenePreset::Custom;
+            };
+            auto request_scene_reset = [&]() {
+                mark_scene_custom();
+                reset_requested = true;
+            };
             auto& selected_field = settings.selected_field;
             selected_field = std::clamp(selected_field, 0, static_cast<int>(fields.size()) - 1);
             if (ImGui::BeginCombo("Field", fields[static_cast<size_t>(selected_field)].label.data())) {
@@ -393,6 +406,23 @@ int main() {
                     if (ImGui::Selectable(fields[static_cast<size_t>(i)].label.data(), is_selected)) {
                         selected_field = i;
                         field_changed = true;
+                    }
+                    if (is_selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            int scene_preset = std::clamp(static_cast<int>(simulation.scene_preset()), 0, static_cast<int>(scene_preset_labels.size()) - 1);
+            if (ImGui::BeginCombo("Scene Preset", scene_preset_labels[static_cast<size_t>(scene_preset)])) {
+                for (int i = 0; i < static_cast<int>(scene_preset_labels.size()); ++i) {
+                    const bool is_selected = scene_preset == i;
+                    if (ImGui::Selectable(scene_preset_labels[static_cast<size_t>(i)], is_selected)) {
+                        if (i < static_cast<int>(smoke::ScenePreset::Custom)) {
+                            simulation.apply_scene_preset(static_cast<smoke::ScenePreset>(i));
+                            reset_requested = true;
+                        } else {
+                            settings.scene_preset = smoke::ScenePreset::Custom;
+                        }
                     }
                     if (is_selected) ImGui::SetItemDefaultFocus();
                 }
@@ -416,16 +446,16 @@ int main() {
             ImGui::Separator();
 
             ImGui::TextUnformatted("Grid / Time");
-            if (ImGui::SliderInt("Grid X", &settings.config.nx, 16, 192)) reset_requested = true;
-            if (ImGui::SliderInt("Grid Y", &settings.config.ny, 16, 192)) reset_requested = true;
-            if (ImGui::SliderInt("Grid Z", &settings.config.nz, 16, 192)) reset_requested = true;
-            if (ImGui::SliderFloat("Dt", &settings.config.dt, 1.0f / 240.0f, 1.0f / 24.0f, "%.5f")) reset_requested = true;
-            if (ImGui::SliderFloat("Cell Size", &settings.config.cell_size, 0.25f, 2.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Viscosity", &settings.config.viscosity, 0.0f, 0.002f, "%.5f")) reset_requested = true;
-            if (ImGui::SliderFloat("Density Diffusion", &settings.density_diffusion, 0.0f, 0.002f, "%.5f")) reset_requested = true;
-            if (ImGui::SliderFloat("Dye Diffusion", &settings.dye_diffusion, 0.0f, 0.002f, "%.5f")) reset_requested = true;
-            if (ImGui::SliderInt("Diffuse Iterations", &settings.config.diffuse_iterations, 1, 64)) reset_requested = true;
-            if (ImGui::SliderInt("Pressure Iterations", &settings.config.pressure_iterations, 4, 192)) reset_requested = true;
+            if (ImGui::SliderInt("Grid X", &settings.config.nx, 16, 192)) request_scene_reset();
+            if (ImGui::SliderInt("Grid Y", &settings.config.ny, 16, 192)) request_scene_reset();
+            if (ImGui::SliderInt("Grid Z", &settings.config.nz, 16, 192)) request_scene_reset();
+            if (ImGui::SliderFloat("Dt", &settings.config.dt, 1.0f / 240.0f, 1.0f / 24.0f, "%.5f")) request_scene_reset();
+            if (ImGui::SliderFloat("Cell Size", &settings.config.cell_size, 0.25f, 2.0f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Viscosity", &settings.config.viscosity, 0.0f, 0.002f, "%.5f")) request_scene_reset();
+            if (ImGui::SliderFloat("Density Diffusion", &settings.density_diffusion, 0.0f, 0.002f, "%.5f")) request_scene_reset();
+            if (ImGui::SliderFloat("Dye Diffusion", &settings.dye_diffusion, 0.0f, 0.002f, "%.5f")) request_scene_reset();
+            if (ImGui::SliderInt("Diffuse Iterations", &settings.config.diffuse_iterations, 1, 64)) request_scene_reset();
+            if (ImGui::SliderInt("Pressure Iterations", &settings.config.pressure_iterations, 4, 192)) request_scene_reset();
 
             auto draw_boundary_combo = [&](const char* label, StableFluidsBoundaryFaceDesc& face) {
                 int boundary = std::clamp(static_cast<int>(face.type), 0, static_cast<int>(boundary_labels.size()) - 1);
@@ -435,7 +465,7 @@ int main() {
                         if (ImGui::Selectable(boundary_labels[static_cast<size_t>(i)], is_selected)) {
                             boundary = i;
                             face.type = static_cast<uint32_t>(i);
-                            reset_requested = true;
+                            request_scene_reset();
                         }
                         if (is_selected) ImGui::SetItemDefaultFocus();
                     }
@@ -451,50 +481,52 @@ int main() {
             draw_boundary_combo("Boundary Y+", settings.config.domain_boundary.y_max);
             draw_boundary_combo("Boundary Z-", settings.config.domain_boundary.z_min);
             draw_boundary_combo("Boundary Z+", settings.config.domain_boundary.z_max);
-            if (ImGui::SliderFloat("Inflow Vel X-", &settings.config.domain_boundary.x_min.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Vel X+", &settings.config.domain_boundary.x_max.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Vel Y-", &settings.config.domain_boundary.y_min.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Vel Y+", &settings.config.domain_boundary.y_max.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Vel Z-", &settings.config.domain_boundary.z_min.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Vel Z+", &settings.config.domain_boundary.z_max.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Inflow Vel X-", &settings.config.domain_boundary.x_min.velocity, -4.0f, 4.0f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Inflow Vel X+", &settings.config.domain_boundary.x_max.velocity, -4.0f, 4.0f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Inflow Vel Y-", &settings.config.domain_boundary.y_min.velocity, -4.0f, 4.0f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Inflow Vel Y+", &settings.config.domain_boundary.y_max.velocity, -4.0f, 4.0f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Inflow Vel Z-", &settings.config.domain_boundary.z_min.velocity, -4.0f, 4.0f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Inflow Vel Z+", &settings.config.domain_boundary.z_max.velocity, -4.0f, 4.0f, "%.2f")) request_scene_reset();
 
             ImGui::Separator();
             ImGui::TextUnformatted("Forces");
-            if (ImGui::SliderFloat("Density Buoyancy", &settings.density_buoyancy, 0.0f, 2.0f, "%.4f")) reset_requested = true;
-            if (ImGui::SliderFloat("Uniform Force X", &settings.config.uniform_force_x, -2.0f, 2.0f, "%.3f")) reset_requested = true;
-            if (ImGui::SliderFloat("Uniform Force Y", &settings.config.uniform_force_y, -2.0f, 2.0f, "%.3f")) reset_requested = true;
-            if (ImGui::SliderFloat("Uniform Force Z", &settings.config.uniform_force_z, -2.0f, 2.0f, "%.3f")) reset_requested = true;
+            if (ImGui::SliderFloat("Density Buoyancy", &settings.density_buoyancy, 0.0f, 2.0f, "%.4f")) request_scene_reset();
+            if (ImGui::SliderFloat("Uniform Force X", &settings.config.uniform_force_x, -2.0f, 2.0f, "%.3f")) request_scene_reset();
+            if (ImGui::SliderFloat("Uniform Force Y", &settings.config.uniform_force_y, -2.0f, 2.0f, "%.3f")) request_scene_reset();
+            if (ImGui::SliderFloat("Uniform Force Z", &settings.config.uniform_force_z, -2.0f, 2.0f, "%.3f")) request_scene_reset();
 
             ImGui::Separator();
             ImGui::TextUnformatted("Sources");
-            if (ImGui::Checkbox("Emit Source", &settings.emit_source)) reset_requested = true;
-            if (ImGui::SliderFloat("Source Radius", &settings.source_radius, 1.0f, 16.0f, "%.1f")) reset_requested = true;
-            if (ImGui::SliderFloat("Density Amount", &settings.density_amount, 0.0f, 2.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Dye Amount", &settings.dye_amount, 0.0f, 2.0f, "%.2f")) reset_requested = true;
-            if (ImGui::ColorEdit3("Source A Dye", &settings.source_a_r)) reset_requested = true;
-            if (ImGui::ColorEdit3("Source B Dye", &settings.source_b_r)) reset_requested = true;
-            if (ImGui::SliderFloat("Jet Speed", &settings.jet_speed, 0.2f, 200.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Upward Bias", &settings.upward_bias, -1.0f, 2.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Focus X", &settings.focus_x, 0.05f, 0.95f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Focus Y", &settings.focus_y, 0.05f, 0.95f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Focus Z", &settings.focus_z, 0.05f, 0.95f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Source A X", &settings.source_a_x, 0.03f, 0.97f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Source A Y", &settings.source_a_y, 0.03f, 0.97f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Source A Z", &settings.source_a_z, 0.03f, 0.97f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Source B X", &settings.source_b_x, 0.03f, 0.97f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Source B Y", &settings.source_b_y, 0.03f, 0.97f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Source B Z", &settings.source_b_z, 0.03f, 0.97f, "%.2f")) reset_requested = true;
+            if (ImGui::Checkbox("Emit Source", &settings.emit_source)) request_scene_reset();
+            auto draw_emitter_controls = [&](const char* label, smoke::SourceEmitterSettings& emitter) {
+                if (!ImGui::TreeNode(label)) return;
+                if (ImGui::Checkbox((std::string("Enabled##") + label).c_str(), &emitter.enabled)) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Pos X##") + label).c_str(), &emitter.position_x, 0.03f, 0.97f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Pos Y##") + label).c_str(), &emitter.position_y, 0.03f, 0.97f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Pos Z##") + label).c_str(), &emitter.position_z, 0.03f, 0.97f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Dir X##") + label).c_str(), &emitter.direction_x, -1.0f, 1.0f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Dir Y##") + label).c_str(), &emitter.direction_y, -1.0f, 1.0f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Dir Z##") + label).c_str(), &emitter.direction_z, -1.0f, 1.0f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Speed##") + label).c_str(), &emitter.speed, 0.0f, 200.0f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Radius##") + label).c_str(), &emitter.radius_cells, 0.5f, 16.0f, "%.1f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Density##") + label).c_str(), &emitter.density_amount, 0.0f, 2.0f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat((std::string("Dye##") + label).c_str(), &emitter.dye_amount, 0.0f, 2.0f, "%.2f")) request_scene_reset();
+                if (ImGui::ColorEdit3((std::string("Color##") + label).c_str(), &emitter.color_r)) request_scene_reset();
+                ImGui::TreePop();
+            };
+            draw_emitter_controls("Emitter A", settings.emitter_a);
+            draw_emitter_controls("Emitter B", settings.emitter_b);
 
             ImGui::Separator();
             ImGui::TextUnformatted("Collider");
-            ImGui::Checkbox("Enable Collider", &settings.collider.enabled);
+            if (ImGui::Checkbox("Enable Collider", &settings.collider.enabled)) request_scene_reset();
             int collider_type = std::clamp(settings.collider.type, 0, static_cast<int>(collider_type_labels.size()) - 1);
             if (ImGui::BeginCombo("Collider Type", collider_type_labels[static_cast<size_t>(collider_type)])) {
                 for (int i = 0; i < static_cast<int>(collider_type_labels.size()); ++i) {
                     const bool is_selected = collider_type == i;
                     if (ImGui::Selectable(collider_type_labels[static_cast<size_t>(i)], is_selected)) {
                         settings.collider.type = i;
-                        reset_requested = true;
+                        request_scene_reset();
                     }
                     if (is_selected) ImGui::SetItemDefaultFocus();
                 }
@@ -506,25 +538,25 @@ int main() {
                     const bool is_selected = collider_boundary == i;
                     if (ImGui::Selectable(boundary_labels[static_cast<size_t>(i)], is_selected)) {
                         settings.collider.boundary = static_cast<uint32_t>(i);
-                        reset_requested = true;
+                        request_scene_reset();
                     }
                     if (is_selected) ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();
             }
-            if (ImGui::SliderFloat("Collider X", &settings.collider.center_x, 0.05f, 0.95f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Collider Y", &settings.collider.center_y, 0.05f, 0.95f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Collider Z", &settings.collider.center_z, 0.05f, 0.95f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Collider X", &settings.collider.center_x, 0.05f, 0.95f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Collider Y", &settings.collider.center_y, 0.05f, 0.95f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Collider Z", &settings.collider.center_z, 0.05f, 0.95f, "%.2f")) request_scene_reset();
             if (settings.collider.type == 0) {
-                if (ImGui::SliderFloat("Collider Radius", &settings.collider.radius, 0.03f, 0.30f, "%.2f")) reset_requested = true;
+                if (ImGui::SliderFloat("Collider Radius", &settings.collider.radius, 0.03f, 0.30f, "%.2f")) request_scene_reset();
             } else {
-                if (ImGui::SliderFloat("Half Extent X", &settings.collider.half_extent_x, 0.03f, 0.30f, "%.2f")) reset_requested = true;
-                if (ImGui::SliderFloat("Half Extent Y", &settings.collider.half_extent_y, 0.03f, 0.30f, "%.2f")) reset_requested = true;
-                if (ImGui::SliderFloat("Half Extent Z", &settings.collider.half_extent_z, 0.03f, 0.30f, "%.2f")) reset_requested = true;
+                if (ImGui::SliderFloat("Half Extent X", &settings.collider.half_extent_x, 0.03f, 0.30f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat("Half Extent Y", &settings.collider.half_extent_y, 0.03f, 0.30f, "%.2f")) request_scene_reset();
+                if (ImGui::SliderFloat("Half Extent Z", &settings.collider.half_extent_z, 0.03f, 0.30f, "%.2f")) request_scene_reset();
             }
-            if (ImGui::SliderFloat("Collider Vel X", &settings.collider.velocity_x, -3.0f, 3.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Collider Vel Y", &settings.collider.velocity_y, -3.0f, 3.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Collider Vel Z", &settings.collider.velocity_z, -3.0f, 3.0f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Collider Vel X", &settings.collider.velocity_x, -3.0f, 3.0f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Collider Vel Y", &settings.collider.velocity_y, -3.0f, 3.0f, "%.2f")) request_scene_reset();
+            if (ImGui::SliderFloat("Collider Vel Z", &settings.collider.velocity_z, -3.0f, 3.0f, "%.2f")) request_scene_reset();
             ImGui::End();
 
             if (field_changed) {
