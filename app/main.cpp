@@ -174,20 +174,6 @@ namespace {
         float* temporary_divergence          = nullptr;
     };
 
-    auto cuda_ok(const cudaError_t status, const char* what) {
-        if (status == cudaSuccess) {
-            return;
-        }
-        throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(status));
-    }
-
-    auto stable_ok(const int32_t code, const char* what) {
-        if (code == 0) {
-            return;
-        }
-        throw std::runtime_error(std::string(what) + " failed");
-    }
-
 } // namespace
 
 int main() {
@@ -426,14 +412,14 @@ int main() {
                     .block_z                    = stable_settings.desc.block_z,
                     .stream                     = stable_runtime.sim_stream,
                 };
-                stable_ok(stable_fluids_advect_scalar_cuda(&scalar_advect), "stable_fluids_advect_scalar_cuda");
-                stable_ok(stable_fluids_diffuse_scalar_cuda(&scalar_diffuse), "stable_fluids_diffuse_scalar_cuda");
+                if (const auto code = stable_fluids_advect_scalar_cuda(&scalar_advect); code != 0) throw std::runtime_error("stable_fluids_advect_scalar_cuda failed");
+                if (const auto code = stable_fluids_diffuse_scalar_cuda(&scalar_diffuse); code != 0) throw std::runtime_error("stable_fluids_diffuse_scalar_cuda failed");
             };
 
-            stable_ok(stable_fluids_add_force_cuda(&add_force_desc), "stable_fluids_add_force_cuda");
-            stable_ok(stable_fluids_advect_velocity_cuda(&advect_velocity_desc), "stable_fluids_advect_velocity_cuda");
-            stable_ok(stable_fluids_diffuse_velocity_cuda(&diffuse_velocity_desc), "stable_fluids_diffuse_velocity_cuda");
-            stable_ok(stable_fluids_project_cuda(&project_desc), "stable_fluids_project_cuda");
+            if (const auto code = stable_fluids_add_force_cuda(&add_force_desc); code != 0) throw std::runtime_error("stable_fluids_add_force_cuda failed");
+            if (const auto code = stable_fluids_advect_velocity_cuda(&advect_velocity_desc); code != 0) throw std::runtime_error("stable_fluids_advect_velocity_cuda failed");
+            if (const auto code = stable_fluids_diffuse_velocity_cuda(&diffuse_velocity_desc); code != 0) throw std::runtime_error("stable_fluids_diffuse_velocity_cuda failed");
+            if (const auto code = stable_fluids_project_cuda(&project_desc); code != 0) throw std::runtime_error("stable_fluids_project_cuda failed");
             run_scalar_flow(stable_runtime.density, stable_runtime.temporary_density, stable_runtime.temporary_previous_density, 1u, stable_settings.desc.inflow_scalar_x_min, stable_settings.desc.inflow_scalar_x_max, stable_settings.desc.inflow_scalar_y_min, stable_settings.desc.inflow_scalar_y_max, stable_settings.desc.inflow_scalar_z_min, stable_settings.desc.inflow_scalar_z_max);
             run_scalar_flow(stable_runtime.dye_r, stable_runtime.temporary_dye_r, stable_runtime.temporary_previous_dye_r, 1u, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
             run_scalar_flow(stable_runtime.dye_g, stable_runtime.temporary_dye_g, stable_runtime.temporary_previous_dye_g, 1u, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
@@ -611,11 +597,11 @@ int main() {
                     .block_z          = stable_settings.desc.block_z,
                     .stream           = stable_runtime.sim_stream,
                 };
-                stable_ok(stable_fluids_add_scalar_source_cuda(&scalar_source_desc), "stable_fluids_add_scalar_source_cuda");
-                stable_ok(stable_fluids_add_scalar_source_cuda(&dye_r_source_desc), "stable_fluids_add_scalar_source_cuda dye_r");
-                stable_ok(stable_fluids_add_scalar_source_cuda(&dye_g_source_desc), "stable_fluids_add_scalar_source_cuda dye_g");
-                stable_ok(stable_fluids_add_scalar_source_cuda(&dye_b_source_desc), "stable_fluids_add_scalar_source_cuda dye_b");
-                stable_ok(stable_fluids_add_vector_source_cuda(&vector_source_desc), "stable_fluids_add_vector_source_cuda");
+                if (const auto code = stable_fluids_add_scalar_source_cuda(&scalar_source_desc); code != 0) throw std::runtime_error("stable_fluids_add_scalar_source_cuda failed");
+                if (const auto code = stable_fluids_add_scalar_source_cuda(&dye_r_source_desc); code != 0) throw std::runtime_error("stable_fluids_add_scalar_source_cuda dye_r failed");
+                if (const auto code = stable_fluids_add_scalar_source_cuda(&dye_g_source_desc); code != 0) throw std::runtime_error("stable_fluids_add_scalar_source_cuda dye_g failed");
+                if (const auto code = stable_fluids_add_scalar_source_cuda(&dye_b_source_desc); code != 0) throw std::runtime_error("stable_fluids_add_scalar_source_cuda dye_b failed");
+                if (const auto code = stable_fluids_add_vector_source_cuda(&vector_source_desc); code != 0) throw std::runtime_error("stable_fluids_add_vector_source_cuda failed");
             };
 
             emit_one(left_x, stable_settings.source_a_r, stable_settings.source_a_g, stable_settings.source_a_b);
@@ -810,7 +796,7 @@ int main() {
                         },
                     .size = requirements.size,
                 };
-                cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
+                if (const auto status = cudaImportExternalMemory(&slot.external_memory, &external_desc); status != cudaSuccess) throw std::runtime_error(std::string("cudaImportExternalMemory") + ": " + cudaGetErrorString(status));
                 CloseHandle(memory_handle);
 
                 vk::SemaphoreGetWin32HandleInfoKHR semaphore_handle_info{
@@ -830,7 +816,7 @@ int main() {
                                 },
                         },
                 };
-                cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
+                if (const auto status = cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc); status != cudaSuccess) throw std::runtime_error(std::string("cudaImportExternalSemaphore") + ": " + cudaGetErrorString(status));
                 CloseHandle(semaphore_handle);
 #else
                 vk::MemoryGetFdInfoKHR handle_info{
@@ -848,7 +834,7 @@ int main() {
                         },
                     .size = requirements.size,
                 };
-                cuda_ok(cudaImportExternalMemory(&slot.external_memory, &external_desc), "cudaImportExternalMemory");
+                if (const auto status = cudaImportExternalMemory(&slot.external_memory, &external_desc); status != cudaSuccess) throw std::runtime_error(std::string("cudaImportExternalMemory") + ": " + cudaGetErrorString(status));
 
                 vk::SemaphoreGetFdInfoKHR semaphore_handle_info{
                     .semaphore  = *slot.timeline_semaphore,
@@ -864,14 +850,14 @@ int main() {
                             .fd = semaphore_fd,
                         },
                 };
-                cuda_ok(cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc), "cudaImportExternalSemaphore");
+                if (const auto status = cudaImportExternalSemaphore(&slot.external_semaphore, &external_semaphore_desc); status != cudaSuccess) throw std::runtime_error(std::string("cudaImportExternalSemaphore") + ": " + cudaGetErrorString(status));
 #endif
 
                 cudaExternalMemoryBufferDesc buffer_desc{
                     .offset = 0,
                     .size   = viewer_runtime.field_bytes,
                 };
-                cuda_ok(cudaExternalMemoryGetMappedBuffer(&slot.cuda_ptr, slot.external_memory, &buffer_desc), "cudaExternalMemoryGetMappedBuffer");
+                if (const auto status = cudaExternalMemoryGetMappedBuffer(&slot.cuda_ptr, slot.external_memory, &buffer_desc); status != cudaSuccess) throw std::runtime_error(std::string("cudaExternalMemoryGetMappedBuffer") + ": " + cudaGetErrorString(status));
 
                 vk::DescriptorBufferInfo field_info{
                     .buffer = *slot.buffer,
@@ -928,9 +914,9 @@ int main() {
                     .block_z = stable_settings.desc.block_z,
                     .stream = stable_runtime.sim_stream,
                 };
-                stable_ok(stable_fluids_pack_smoke_rgba_cuda(&pack_desc), "stable_fluids_pack_smoke_rgba_cuda");
+                if (const auto code = stable_fluids_pack_smoke_rgba_cuda(&pack_desc); code != 0) throw std::runtime_error("stable_fluids_pack_smoke_rgba_cuda failed");
             } else if (field.id == FieldId::Density) {
-                cuda_ok(cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), cudaMemcpyDeviceToDevice, stable_runtime.sim_stream), "cudaMemcpyAsync stable density snapshot");
+                if (const auto status = cudaMemcpyAsync(slot.cuda_ptr, stable_runtime.density, scalar_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), cudaMemcpyDeviceToDevice, stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaMemcpyAsync stable density snapshot") + ": " + cudaGetErrorString(status));
             } else {
                 StableFluidsComputeStaggeredVelocityMagnitudeDesc magnitude_desc{
                     .struct_size = sizeof(StableFluidsComputeStaggeredVelocityMagnitudeDesc),
@@ -947,14 +933,14 @@ int main() {
                     .block_z = stable_settings.desc.block_z,
                     .stream = stable_runtime.sim_stream,
                 };
-                stable_ok(stable_fluids_compute_staggered_velocity_magnitude_cuda(&magnitude_desc), "stable_fluids_compute_staggered_velocity_magnitude_cuda");
+                if (const auto code = stable_fluids_compute_staggered_velocity_magnitude_cuda(&magnitude_desc); code != 0) throw std::runtime_error("stable_fluids_compute_staggered_velocity_magnitude_cuda failed");
             }
 
             const uint64_t next_generation = viewer_runtime.snapshot_generation + 1;
             cudaExternalSemaphoreSignalParams signal_params{};
             signal_params.params.fence.value = next_generation;
-            cuda_ok(cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, stable_runtime.sim_stream), "cudaSignalExternalSemaphoresAsync snapshot");
-            cuda_ok(cudaStreamSynchronize(stable_runtime.sim_stream), "cudaStreamSynchronize snapshot");
+            if (const auto status = cudaSignalExternalSemaphoresAsync(&slot.external_semaphore, &signal_params, 1, stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaSignalExternalSemaphoresAsync snapshot") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaStreamSynchronize(stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaStreamSynchronize snapshot") + ": " + cudaGetErrorString(status));
             slot.ready_generation               = next_generation;
             viewer_runtime.snapshot_generation  = next_generation;
             viewer_runtime.active_snapshot_slot = slot_index;
@@ -977,9 +963,9 @@ int main() {
             if (!timeline_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("smoke-visualizer requires Vulkan timeline semaphore support");
 
             int cuda_device_index = 0;
-            cuda_ok(cudaGetDevice(&cuda_device_index), "cudaGetDevice");
+            if (const auto status = cudaGetDevice(&cuda_device_index); status != cudaSuccess) throw std::runtime_error(std::string("cudaGetDevice") + ": " + cudaGetErrorString(status));
             int cuda_timeline_semaphore_interop_supported = 0;
-            cuda_ok(cudaDeviceGetAttribute(&cuda_timeline_semaphore_interop_supported, cudaDevAttrTimelineSemaphoreInteropSupported, cuda_device_index), "cudaDeviceGetAttribute cudaDevAttrTimelineSemaphoreInteropSupported");
+            if (const auto status = cudaDeviceGetAttribute(&cuda_timeline_semaphore_interop_supported, cudaDevAttrTimelineSemaphoreInteropSupported, cuda_device_index); status != cudaSuccess) throw std::runtime_error(std::string("cudaDeviceGetAttribute cudaDevAttrTimelineSemaphoreInteropSupported") + ": " + cudaGetErrorString(status));
             if (cuda_timeline_semaphore_interop_supported == 0) throw std::runtime_error("smoke-visualizer requires CUDA timeline semaphore interop support");
 
             destroy_everything();
@@ -991,40 +977,40 @@ int main() {
             const auto stable_velocity_y_bytes = velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
             const auto stable_velocity_z_bytes = velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz);
             stable_runtime.device_allocated    = true;
-            cuda_ok(cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags stable_stream");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), stable_scalar_bytes), "cudaMalloc stable density");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_r), stable_scalar_bytes), "cudaMalloc stable dye_r");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_g), stable_scalar_bytes), "cudaMalloc stable dye_g");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_b), stable_scalar_bytes), "cudaMalloc stable dye_b");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), stable_velocity_x_bytes), "cudaMalloc stable velocity_x");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), stable_velocity_y_bytes), "cudaMalloc stable velocity_y");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), stable_velocity_z_bytes), "cudaMalloc stable velocity_z");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_density), stable_scalar_bytes), "cudaMalloc stable temporary_density");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_r), stable_scalar_bytes), "cudaMalloc stable temporary_dye_r");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_g), stable_scalar_bytes), "cudaMalloc stable temporary_dye_g");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_b), stable_scalar_bytes), "cudaMalloc stable temporary_dye_b");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_velocity_x");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_velocity_y");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_velocity_z");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_density), stable_scalar_bytes), "cudaMalloc stable temporary_previous_density");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_r), stable_scalar_bytes), "cudaMalloc stable temporary_previous_dye_r");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_g), stable_scalar_bytes), "cudaMalloc stable temporary_previous_dye_g");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_b), stable_scalar_bytes), "cudaMalloc stable temporary_previous_dye_b");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_x), stable_velocity_x_bytes), "cudaMalloc stable temporary_previous_velocity_x");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_y), stable_velocity_y_bytes), "cudaMalloc stable temporary_previous_velocity_y");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_z), stable_velocity_z_bytes), "cudaMalloc stable temporary_previous_velocity_z");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), stable_scalar_bytes), "cudaMalloc stable temporary_pressure");
-            cuda_ok(cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), stable_scalar_bytes), "cudaMalloc stable temporary_divergence");
+            if (const auto status = cudaStreamCreateWithFlags(&stable_runtime.sim_stream, cudaStreamNonBlocking); status != cudaSuccess) throw std::runtime_error(std::string("cudaStreamCreateWithFlags stable_stream") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.density), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable density") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_r), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable dye_r") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_g), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable dye_g") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.dye_b), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable dye_b") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_x), stable_velocity_x_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable velocity_x") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_y), stable_velocity_y_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable velocity_y") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.velocity_z), stable_velocity_z_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable velocity_z") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_density), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_density") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_r), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_dye_r") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_g), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_dye_g") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_dye_b), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_dye_b") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_x), stable_velocity_x_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_velocity_x") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_y), stable_velocity_y_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_velocity_y") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_velocity_z), stable_velocity_z_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_velocity_z") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_density), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_previous_density") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_r), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_previous_dye_r") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_g), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_previous_dye_g") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_dye_b), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_previous_dye_b") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_x), stable_velocity_x_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_previous_velocity_x") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_y), stable_velocity_y_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_previous_velocity_y") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_previous_velocity_z), stable_velocity_z_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_previous_velocity_z") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_pressure), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_pressure") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMalloc(reinterpret_cast<void**>(&stable_runtime.temporary_divergence), stable_scalar_bytes); status != cudaSuccess) throw std::runtime_error(std::string("cudaMalloc stable temporary_divergence") + ": " + cudaGetErrorString(status));
 
             create_snapshot_slots();
 
-            cuda_ok(cudaMemsetAsync(stable_runtime.density, 0, stable_scalar_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable density");
-            cuda_ok(cudaMemsetAsync(stable_runtime.dye_r, 0, stable_scalar_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable dye_r");
-            cuda_ok(cudaMemsetAsync(stable_runtime.dye_g, 0, stable_scalar_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable dye_g");
-            cuda_ok(cudaMemsetAsync(stable_runtime.dye_b, 0, stable_scalar_bytes, stable_runtime.sim_stream), "cudaMemsetAsync stable dye_b");
-            cuda_ok(cudaMemsetAsync(stable_runtime.velocity_x, 0, velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_x");
-            cuda_ok(cudaMemsetAsync(stable_runtime.velocity_y, 0, velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_y");
-            cuda_ok(cudaMemsetAsync(stable_runtime.velocity_z, 0, velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream), "cudaMemsetAsync stable velocity_z");
+            if (const auto status = cudaMemsetAsync(stable_runtime.density, 0, stable_scalar_bytes, stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaMemsetAsync stable density") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMemsetAsync(stable_runtime.dye_r, 0, stable_scalar_bytes, stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaMemsetAsync stable dye_r") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMemsetAsync(stable_runtime.dye_g, 0, stable_scalar_bytes, stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaMemsetAsync stable dye_g") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMemsetAsync(stable_runtime.dye_b, 0, stable_scalar_bytes, stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaMemsetAsync stable dye_b") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMemsetAsync(stable_runtime.velocity_x, 0, velocity_x_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaMemsetAsync stable velocity_x") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMemsetAsync(stable_runtime.velocity_y, 0, velocity_y_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaMemsetAsync stable velocity_y") + ": " + cudaGetErrorString(status));
+            if (const auto status = cudaMemsetAsync(stable_runtime.velocity_z, 0, velocity_z_bytes(stable_settings.desc.nx, stable_settings.desc.ny, stable_settings.desc.nz), stable_runtime.sim_stream); status != cudaSuccess) throw std::runtime_error(std::string("cudaMemsetAsync stable velocity_z") + ": " + cudaGetErrorString(status));
             if (stable_settings.emit_source) {
                 inject_stable_dual_sources();
                 run_stable_step();
