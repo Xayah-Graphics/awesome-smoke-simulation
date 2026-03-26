@@ -98,14 +98,14 @@ namespace smoke {
         StableSimulation& operator=(const StableSimulation&) = delete;
 
         Settings& settings();
-        const Settings& settings() const;
-        const SolverStats& stats() const;
-        cudaStream_t stream() const;
+        [[nodiscard]] const Settings& settings() const;
+        [[nodiscard]] const SolverStats& stats() const;
+        [[nodiscard]] cudaStream_t stream() const;
 
         void rebuild();
         void step(int sim_steps);
-        void export_field(FieldId field, void* destination);
-        StableFluidsGridDesc grid_desc() const;
+        void export_field(FieldId field, void* destination) const;
+        [[nodiscard]] StableFluidsGridDesc grid_desc() const;
 
     private:
         void update_scene();

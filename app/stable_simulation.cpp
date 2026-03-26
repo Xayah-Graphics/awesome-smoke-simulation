@@ -11,9 +11,9 @@ namespace smoke {
 
     namespace {
 
-        void check_cuda(const cudaError_t status, const char* what) {
+        void check_cuda(const cudaError_t status) {
             if (status == cudaSuccess) return;
-            throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(status));
+            throw std::runtime_error(std::string("cudaStreamCreateWithFlags") + ": " + cudaGetErrorString(status));
         }
 
         void check_stable(const int32_t code, const char* what) {
@@ -22,9 +22,9 @@ namespace smoke {
         }
 
         StableFluidsSourceDesc make_source(const Settings& settings, const float source_x, const float color_r, const float color_g, const float color_b) {
-            const float nx = static_cast<float>(settings.config.nx);
-            const float ny = static_cast<float>(settings.config.ny);
-            const float nz = static_cast<float>(settings.config.nz);
+            const auto nx = static_cast<float>(settings.config.nx);
+            const auto ny = static_cast<float>(settings.config.ny);
+            const auto nz = static_cast<float>(settings.config.nz);
             const float center_x = nx * 0.5f;
             const float center_y = ny * 0.52f;
             const float center_z = nz * 0.5f;
@@ -55,7 +55,7 @@ namespace smoke {
     } // namespace
 
     StableSimulation::StableSimulation() {
-        check_cuda(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking), "cudaStreamCreateWithFlags");
+        check_cuda(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking));
         rebuild();
     }
 
@@ -130,7 +130,7 @@ namespace smoke {
     }
 
     void StableSimulation::step(const int sim_steps) {
-        const float nx = static_cast<float>(settings_.config.nx);
+        const auto nx = static_cast<float>(settings_.config.nx);
         const std::array sources{
             make_source(settings_, nx * settings_.corner_inset, settings_.source_a_r, settings_.source_a_g, settings_.source_a_b),
             make_source(settings_, nx * (1.0f - settings_.corner_inset), settings_.source_b_r, settings_.source_b_g, settings_.source_b_b),
@@ -152,8 +152,8 @@ namespace smoke {
         }
     }
 
-    void StableSimulation::export_field(const FieldId field, void* destination) {
-        uint32_t export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_DYE_RGBA);
+    void StableSimulation::export_field(const FieldId field, void* destination) const {
+        auto export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_DYE_RGBA);
         if (field == FieldId::Density) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_DENSITY);
         if (field == FieldId::VelocityMagnitude) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_VELOCITY_MAGNITUDE);
         if (field == FieldId::SolidMask) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_SOLID_MASK);
