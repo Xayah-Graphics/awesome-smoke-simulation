@@ -63,7 +63,7 @@ namespace smoke {
                 .component_count = 1,
                 .flags = STABLE_FLUIDS_FIELD_ADVECT | STABLE_FLUIDS_FIELD_DIFFUSE,
                 .diffusion = settings_.density_diffusion,
-                .boundary_mode = static_cast<uint32_t>(STABLE_FLUIDS_FIELD_BOUNDARY_STREAK),
+                .extension_mode = static_cast<uint32_t>(STABLE_FLUIDS_FIELD_EXTENSION_STREAK),
                 .default_value_0 = 0.0f,
                 .default_value_1 = 0.0f,
                 .default_value_2 = 0.0f,
@@ -74,7 +74,7 @@ namespace smoke {
                 .component_count = 3,
                 .flags = STABLE_FLUIDS_FIELD_ADVECT | STABLE_FLUIDS_FIELD_DIFFUSE,
                 .diffusion = settings_.dye_diffusion,
-                .boundary_mode = static_cast<uint32_t>(STABLE_FLUIDS_FIELD_BOUNDARY_STREAK),
+                .extension_mode = static_cast<uint32_t>(STABLE_FLUIDS_FIELD_EXTENSION_STREAK),
                 .default_value_0 = 0.0f,
                 .default_value_1 = 0.0f,
                 .default_value_2 = 0.0f,
@@ -113,7 +113,7 @@ namespace smoke {
 
         StableFluidsColliderDesc collider{
             .collider_type = static_cast<uint32_t>(settings_.collider.type == 0 ? STABLE_FLUIDS_COLLIDER_SPHERE : STABLE_FLUIDS_COLLIDER_BOX),
-            .boundary_type = settings_.collider.boundary,
+            .velocity_boundary_type = settings_.collider.boundary,
             .center_x = settings_.collider.center_x * static_cast<float>(settings_.config.nx) * settings_.config.cell_size,
             .center_y = settings_.collider.center_y * static_cast<float>(settings_.config.ny) * settings_.config.cell_size,
             .center_z = settings_.collider.center_z * static_cast<float>(settings_.config.nz) * settings_.config.cell_size,
