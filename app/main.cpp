@@ -363,6 +363,7 @@ int main() {
             if (cudaDeviceGetAttribute(&timeline_supported, cudaDevAttrTimelineSemaphoreInteropSupported, cuda_device_index) != cudaSuccess) throw std::runtime_error("cudaDeviceGetAttribute failed");
             if (timeline_supported == 0) throw std::runtime_error("CUDA timeline semaphore interop is required");
 
+            renderer.vk_context().device.waitIdle();
             simulation.rebuild();
             if (simulation.settings().emit_source) simulation.step(1);
             destroy_snapshot_slots();

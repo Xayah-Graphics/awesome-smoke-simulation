@@ -16,9 +16,9 @@ namespace smoke {
             throw std::runtime_error(std::string("cudaStreamCreateWithFlags") + ": " + cudaGetErrorString(status));
         }
 
-        void check_stable(const int32_t code, const char* what) {
-            if (code == 0) return;
-            throw std::runtime_error(std::string(what) + " failed (" + std::to_string(code) + ")");
+        void check_stable(const StableFluidsResult code, const char* what) {
+            if (code == STABLE_FLUIDS_RESULT_OK) return;
+            throw std::runtime_error(std::string(what) + " failed (" + std::to_string(static_cast<int>(code)) + ")");
         }
 
     } // namespace
@@ -58,7 +58,7 @@ namespace smoke {
         dye_field_ = 0;
 
         std::array fields{
-            StableFluidsFieldDesc{
+            StableFluidsFieldCreateDesc{
                 .name = "density",
                 .component_count = 1,
                 .flags = STABLE_FLUIDS_FIELD_ADVECT | STABLE_FLUIDS_FIELD_DIFFUSE,
@@ -68,9 +68,8 @@ namespace smoke {
                 .default_value_1 = 0.0f,
                 .default_value_2 = 0.0f,
                 .default_value_3 = 0.0f,
-                .handle = 0,
             },
-            StableFluidsFieldDesc{
+            StableFluidsFieldCreateDesc{
                 .name = "dye",
                 .component_count = 3,
                 .flags = STABLE_FLUIDS_FIELD_ADVECT | STABLE_FLUIDS_FIELD_DIFFUSE,
@@ -80,16 +79,16 @@ namespace smoke {
                 .default_value_1 = 0.0f,
                 .default_value_2 = 0.0f,
                 .default_value_3 = 0.0f,
-                .handle = 0,
             },
         };
         std::array buoyancy_terms{
             StableFluidsBuoyancyDesc{
-                .field = 1,
+                .field_index = 0,
                 .weight = settings_.density_buoyancy,
                 .ambient = 0.0f,
             },
         };
+        std::array<StableFluidsFieldHandle, 2> field_handles{};
 
         StableFluidsContextCreateDesc create_desc{
             .config = settings_.config,
@@ -99,9 +98,9 @@ namespace smoke {
             .buoyancy_terms = buoyancy_terms.data(),
             .buoyancy_term_count = static_cast<uint32_t>(buoyancy_terms.size()),
         };
-        check_stable(stable_fluids_create_context_cuda(&create_desc, &context_), "stable_fluids_create_context_cuda");
-        density_field_ = fields[0].handle;
-        dye_field_ = fields[1].handle;
+        check_stable(stable_fluids_create_context_cuda(&create_desc, &context_, field_handles.data(), static_cast<uint32_t>(field_handles.size())), "stable_fluids_create_context_cuda");
+        density_field_ = field_handles[0];
+        dye_field_ = field_handles[1];
         update_scene();
         stats_ = {};
     }
@@ -215,25 +214,27 @@ namespace smoke {
     }
 
     void StableSimulation::export_field(const FieldId field, void* destination) const {
-        StableFluidsExportFieldDesc export_desc{
-            .field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_ALPHA_RGB_RGBA),
-            .field_handle = 0,
-            .component_offset = 0,
-            .component_count = 0,
-            .alpha_field = density_field_,
-            .rgb_field = dye_field_,
-            .destination = destination,
-        };
-        if (field == FieldId::Density) {
-            export_desc.field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_FIELD_COMPONENTS);
-            export_desc.field_handle = density_field_;
-            export_desc.component_count = 1;
+        if (field == FieldId::SmokeColor) {
+            check_stable(stable_fluids_export_alpha_rgb_rgba_cuda(context_, density_field_, dye_field_, destination), "stable_fluids_export_alpha_rgb_rgba_cuda");
+            return;
         }
-        if (field == FieldId::VelocityMagnitude) export_desc.field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_VELOCITY_MAGNITUDE);
-        if (field == FieldId::SolidMask) export_desc.field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_SOLID_MASK);
-        if (field == FieldId::Pressure) export_desc.field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_PRESSURE);
-        if (field == FieldId::Divergence) export_desc.field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_DIVERGENCE);
-        check_stable(stable_fluids_export_field_cuda(context_, &export_desc), "stable_fluids_export_field_cuda");
+        if (field == FieldId::Density) {
+            check_stable(stable_fluids_export_field_components_cuda(context_, density_field_, 0, 1, destination), "stable_fluids_export_field_components_cuda");
+            return;
+        }
+        if (field == FieldId::VelocityMagnitude) {
+            check_stable(stable_fluids_export_velocity_magnitude_cuda(context_, destination), "stable_fluids_export_velocity_magnitude_cuda");
+            return;
+        }
+        if (field == FieldId::SolidMask) {
+            check_stable(stable_fluids_export_solid_mask_cuda(context_, destination), "stable_fluids_export_solid_mask_cuda");
+            return;
+        }
+        if (field == FieldId::Pressure) {
+            check_stable(stable_fluids_export_pressure_cuda(context_, destination), "stable_fluids_export_pressure_cuda");
+            return;
+        }
+        check_stable(stable_fluids_export_divergence_cuda(context_, destination), "stable_fluids_export_divergence_cuda");
     }
 
     StableFluidsGridDesc StableSimulation::grid_desc() const {
