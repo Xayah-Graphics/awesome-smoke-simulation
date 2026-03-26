@@ -421,7 +421,8 @@ int main() {
             if (ImGui::SliderFloat("Dt", &settings.config.dt, 1.0f / 240.0f, 1.0f / 24.0f, "%.5f")) reset_requested = true;
             if (ImGui::SliderFloat("Cell Size", &settings.config.cell_size, 0.25f, 2.0f, "%.2f")) reset_requested = true;
             if (ImGui::SliderFloat("Viscosity", &settings.config.viscosity, 0.0f, 0.002f, "%.5f")) reset_requested = true;
-            if (ImGui::SliderFloat("Diffusion", &settings.config.diffusion, 0.0f, 0.002f, "%.5f")) reset_requested = true;
+            if (ImGui::SliderFloat("Density Diffusion", &settings.density_diffusion, 0.0f, 0.002f, "%.5f")) reset_requested = true;
+            if (ImGui::SliderFloat("Dye Diffusion", &settings.dye_diffusion, 0.0f, 0.002f, "%.5f")) reset_requested = true;
             if (ImGui::SliderInt("Diffuse Iterations", &settings.config.diffuse_iterations, 1, 64)) reset_requested = true;
             if (ImGui::SliderInt("Pressure Iterations", &settings.config.pressure_iterations, 4, 192)) reset_requested = true;
 
@@ -455,18 +456,10 @@ int main() {
             if (ImGui::SliderFloat("Inflow Vel Y+", &settings.config.domain_boundary.y_max.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
             if (ImGui::SliderFloat("Inflow Vel Z-", &settings.config.domain_boundary.z_min.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
             if (ImGui::SliderFloat("Inflow Vel Z+", &settings.config.domain_boundary.z_max.velocity, -4.0f, 4.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Density X-", &settings.config.domain_boundary.x_min.scalar, 0.0f, 3.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Density X+", &settings.config.domain_boundary.x_max.scalar, 0.0f, 3.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Density Y-", &settings.config.domain_boundary.y_min.scalar, 0.0f, 3.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Density Y+", &settings.config.domain_boundary.y_max.scalar, 0.0f, 3.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Density Z-", &settings.config.domain_boundary.z_min.scalar, 0.0f, 3.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Inflow Density Z+", &settings.config.domain_boundary.z_max.scalar, 0.0f, 3.0f, "%.2f")) reset_requested = true;
 
             ImGui::Separator();
             ImGui::TextUnformatted("Forces");
-            if (ImGui::SliderFloat("Ambient Temp", &settings.config.ambient_temperature, -2.0f, 2.0f, "%.2f")) reset_requested = true;
-            if (ImGui::SliderFloat("Density Buoyancy", &settings.config.density_buoyancy, 0.0f, 2.0f, "%.4f")) reset_requested = true;
-            if (ImGui::SliderFloat("Temperature Buoyancy", &settings.config.temperature_buoyancy, 0.0f, 2.0f, "%.4f")) reset_requested = true;
+            if (ImGui::SliderFloat("Density Buoyancy", &settings.density_buoyancy, 0.0f, 2.0f, "%.4f")) reset_requested = true;
             if (ImGui::SliderFloat("Uniform Force X", &settings.config.uniform_force_x, -2.0f, 2.0f, "%.3f")) reset_requested = true;
             if (ImGui::SliderFloat("Uniform Force Y", &settings.config.uniform_force_y, -2.0f, 2.0f, "%.3f")) reset_requested = true;
             if (ImGui::SliderFloat("Uniform Force Z", &settings.config.uniform_force_z, -2.0f, 2.0f, "%.3f")) reset_requested = true;

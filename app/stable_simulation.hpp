@@ -47,27 +47,26 @@ namespace smoke {
             .cell_size = 1.0f,
             .dt = 1.0f / 90.0f,
             .viscosity = 0.00015f,
-            .diffusion = 0.00005f,
             .diffuse_iterations = 24,
             .pressure_iterations = 80,
-            .ambient_temperature = 0.0f,
-            .density_buoyancy = 0.35f,
-            .temperature_buoyancy = 0.0f,
             .uniform_force_x = 0.0f,
             .uniform_force_y = 0.0f,
             .uniform_force_z = 0.0f,
             .domain_boundary = {
-                .x_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, .scalar = 0.0f, },
-                .x_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, .scalar = 0.0f, },
-                .y_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 1.2f, .scalar = 0.8f, },
-                .y_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, .scalar = 0.0f, },
-                .z_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, .scalar = 0.0f, },
-                .z_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, .scalar = 0.0f, },
+                .x_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .x_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .y_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .y_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .z_min = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
+                .z_max = { .type = static_cast<uint32_t>(STABLE_FLUIDS_BOUNDARY_OUTFLOW), .velocity = 0.0f, },
             },
             .block_x = 8,
             .block_y = 8,
             .block_z = 4,
         };
+        float density_diffusion = 0.00005f;
+        float dye_diffusion     = 0.00003f;
+        float density_buoyancy  = 0.35f;
         int selected_field   = 0;
         bool emit_source     = true;
         float source_radius  = 3.5f;
@@ -81,10 +80,10 @@ namespace smoke {
         float source_b_b     = 1.00f;
         float source_a_x     = 0.16f;
         float source_a_y     = 0.12f;
-        float source_a_z     = 0.16f;
+        float source_a_z     = 0.22f;
         float source_b_x     = 0.84f;
         float source_b_y     = 0.12f;
-        float source_b_z     = 0.16f;
+        float source_b_z     = 0.22f;
         float focus_x        = 0.50f;
         float focus_y        = 0.50f;
         float focus_z        = 0.50f;
@@ -118,6 +117,8 @@ namespace smoke {
         SolverStats stats_{};
         cudaStream_t stream_        = nullptr;
         StableFluidsContext context_ = nullptr;
+        StableFluidsFieldHandle density_field_ = 0;
+        StableFluidsFieldHandle dye_field_     = 0;
     };
 
 } // namespace smoke
