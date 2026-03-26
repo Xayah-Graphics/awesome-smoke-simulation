@@ -56,8 +56,6 @@ namespace smoke {
         }
 
         StableFluidsContextCreateDesc create_desc{
-            .struct_size = sizeof(StableFluidsContextCreateDesc),
-            .api_version = STABLE_FLUIDS_API_VERSION,
             .config = settings_.config,
             .stream = stream_,
         };
@@ -68,15 +66,11 @@ namespace smoke {
 
     void StableSimulation::update_scene() {
         StableFluidsSceneDesc scene_desc{
-            .struct_size = sizeof(StableFluidsSceneDesc),
-            .api_version = STABLE_FLUIDS_API_VERSION,
             .colliders = nullptr,
             .collider_count = 0,
         };
 
         StableFluidsColliderDesc collider{
-            .struct_size = sizeof(StableFluidsColliderDesc),
-            .api_version = STABLE_FLUIDS_API_VERSION,
             .collider_type = static_cast<uint32_t>(settings_.collider.type == 0 ? STABLE_FLUIDS_COLLIDER_SPHERE : STABLE_FLUIDS_COLLIDER_BOX),
             .boundary_type = settings_.collider.boundary,
             .center_x = settings_.collider.center_x * static_cast<float>(settings_.config.nx) * settings_.config.cell_size,
@@ -111,8 +105,6 @@ namespace smoke {
             const float dir_z = focus_z - source_z;
             const float inv_len = 1.0f / (std::sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z) + 1.0e-6f);
             return StableFluidsSourceDesc{
-                .struct_size = sizeof(StableFluidsSourceDesc),
-                .api_version = STABLE_FLUIDS_API_VERSION,
                 .center_x = source_x,
                 .center_y = source_y,
                 .center_z = source_z,
@@ -134,8 +126,6 @@ namespace smoke {
 
         for (int step_index = 0; step_index < sim_steps; ++step_index) {
             StableFluidsStepDesc step_desc{
-                .struct_size = sizeof(StableFluidsStepDesc),
-                .api_version = STABLE_FLUIDS_API_VERSION,
                 .sources = settings_.emit_source ? sources.data() : nullptr,
                 .source_count = settings_.emit_source ? static_cast<uint32_t>(sources.size()) : 0u,
             };
@@ -157,8 +147,6 @@ namespace smoke {
         if (field == FieldId::Divergence) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_DIVERGENCE);
 
         StableFluidsExportFieldDesc export_desc{
-            .struct_size = sizeof(StableFluidsExportFieldDesc),
-            .api_version = STABLE_FLUIDS_API_VERSION,
             .field = export_field,
             .destination = destination,
         };
@@ -166,10 +154,7 @@ namespace smoke {
     }
 
     StableFluidsGridDesc StableSimulation::grid_desc() const {
-        StableFluidsGridDesc desc{
-            .struct_size = sizeof(StableFluidsGridDesc),
-            .api_version = STABLE_FLUIDS_API_VERSION,
-        };
+        StableFluidsGridDesc desc{};
         check_stable(stable_fluids_get_grid_desc_cuda(context_, &desc), "stable_fluids_get_grid_desc_cuda");
         return desc;
     }

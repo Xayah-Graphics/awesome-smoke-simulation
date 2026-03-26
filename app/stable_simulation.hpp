@@ -41,8 +41,6 @@ namespace smoke {
 
     struct Settings {
         StableFluidsSimulationConfig config{
-            .struct_size = sizeof(StableFluidsSimulationConfig),
-            .api_version = STABLE_FLUIDS_API_VERSION,
             .nx = 128,
             .ny = 128,
             .nz = 128,
