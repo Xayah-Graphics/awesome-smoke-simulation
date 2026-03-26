@@ -151,6 +151,11 @@ int main() {
         auto active_snapshot = [&]() -> std::optional<app::ScalarFieldView> {
             if (viewer_runtime.active_snapshot_slot < 0) return std::nullopt;
             const auto& slot = snapshot_slots.at(static_cast<size_t>(viewer_runtime.active_snapshot_slot));
+            const auto& settings = simulation.settings();
+            const float nx = static_cast<float>(settings.config.nx) * settings.config.cell_size;
+            const float ny = static_cast<float>(settings.config.ny) * settings.config.cell_size;
+            const float nz = static_cast<float>(settings.config.nz) * settings.config.cell_size;
+            const float max_extent = static_cast<float>((std::max) ({settings.config.nx, settings.config.ny, settings.config.nz})) * settings.config.cell_size;
             return app::ScalarFieldView{
                 .descriptor_set = *slot.descriptor_set,
                 .timeline_semaphore = slot.external_semaphore != nullptr ? *slot.timeline_semaphore : vk::Semaphore{},
@@ -161,6 +166,15 @@ int main() {
                 .cell_size = slot.cell_size,
                 .semantic = slot.semantic,
                 .label = slot.label,
+                .collider_enabled = settings.collider.enabled,
+                .collider_type = static_cast<uint32_t>(settings.collider.type),
+                .collider_center_x = settings.collider.center_x * nx,
+                .collider_center_y = settings.collider.center_y * ny,
+                .collider_center_z = settings.collider.center_z * nz,
+                .collider_radius = settings.collider.radius * max_extent,
+                .collider_half_x = settings.collider.half_extent_x * nx,
+                .collider_half_y = settings.collider.half_extent_y * ny,
+                .collider_half_z = settings.collider.half_extent_z * nz,
             };
         };
 
@@ -459,17 +473,23 @@ int main() {
 
             ImGui::Separator();
             ImGui::TextUnformatted("Sources");
-            ImGui::Checkbox("Emit Source", &settings.emit_source);
-            ImGui::SliderFloat("Corner Inset", &settings.corner_inset, 0.04f, 0.32f, "%.2f");
-            ImGui::SliderFloat("Source Height", &settings.source_height, 0.03f, 0.24f, "%.2f");
-            ImGui::SliderFloat("Source Depth", &settings.source_depth, 0.04f, 0.32f, "%.2f");
-            ImGui::SliderFloat("Source Radius", &settings.source_radius, 1.0f, 16.0f, "%.1f");
-            ImGui::SliderFloat("Density Amount", &settings.density_amount, 0.0f, 2.0f, "%.2f");
-            ImGui::SliderFloat("Dye Amount", &settings.dye_amount, 0.0f, 2.0f, "%.2f");
-            ImGui::ColorEdit3("Source A Dye", &settings.source_a_r);
-            ImGui::ColorEdit3("Source B Dye", &settings.source_b_r);
-            ImGui::SliderFloat("Jet Speed", &settings.jet_speed, 0.2f, 200.0f, "%.2f");
-            ImGui::SliderFloat("Upward Bias", &settings.upward_bias, -1.0f, 2.0f, "%.2f");
+            if (ImGui::Checkbox("Emit Source", &settings.emit_source)) reset_requested = true;
+            if (ImGui::SliderFloat("Source Radius", &settings.source_radius, 1.0f, 16.0f, "%.1f")) reset_requested = true;
+            if (ImGui::SliderFloat("Density Amount", &settings.density_amount, 0.0f, 2.0f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Dye Amount", &settings.dye_amount, 0.0f, 2.0f, "%.2f")) reset_requested = true;
+            if (ImGui::ColorEdit3("Source A Dye", &settings.source_a_r)) reset_requested = true;
+            if (ImGui::ColorEdit3("Source B Dye", &settings.source_b_r)) reset_requested = true;
+            if (ImGui::SliderFloat("Jet Speed", &settings.jet_speed, 0.2f, 200.0f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Upward Bias", &settings.upward_bias, -1.0f, 2.0f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Focus X", &settings.focus_x, 0.05f, 0.95f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Focus Y", &settings.focus_y, 0.05f, 0.95f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Focus Z", &settings.focus_z, 0.05f, 0.95f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Source A X", &settings.source_a_x, 0.03f, 0.97f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Source A Y", &settings.source_a_y, 0.03f, 0.97f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Source A Z", &settings.source_a_z, 0.03f, 0.97f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Source B X", &settings.source_b_x, 0.03f, 0.97f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Source B Y", &settings.source_b_y, 0.03f, 0.97f, "%.2f")) reset_requested = true;
+            if (ImGui::SliderFloat("Source B Z", &settings.source_b_z, 0.03f, 0.97f, "%.2f")) reset_requested = true;
 
             ImGui::Separator();
             ImGui::TextUnformatted("Collider");

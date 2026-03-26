@@ -56,6 +56,8 @@ export namespace app {
         int march_steps       = 96;
         float density_scale   = 0.95f;
         float absorption      = 1.20f;
+        bool show_bounds      = true;
+        bool show_collider    = true;
         float scalar_min      = 0.0f;
         float scalar_max      = 1.0f;
         float scalar_opacity  = 2.0f;
@@ -82,6 +84,15 @@ export namespace app {
         float cell_size           = 1.0f;
         FieldSemantic semantic    = FieldSemantic::GenericScalar;
         std::string_view label{};
+        bool collider_enabled     = false;
+        uint32_t collider_type    = 0;
+        float collider_center_x   = 0.0f;
+        float collider_center_y   = 0.0f;
+        float collider_center_z   = 0.0f;
+        float collider_radius     = 0.0f;
+        float collider_half_x     = 0.0f;
+        float collider_half_y     = 0.0f;
+        float collider_half_z     = 0.0f;
     };
 
     class FieldRendererApp {

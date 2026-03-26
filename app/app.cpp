@@ -157,6 +157,8 @@ namespace app {
         }
         ImGui::SliderInt("March Steps", &render_.march_steps, 24, 224);
         ImGui::SliderFloat("Density Scale", &render_.density_scale, 0.05f, 2.0f, "%.2f");
+        ImGui::Checkbox("Show Bounding Box", &render_.show_bounds);
+        ImGui::Checkbox("Show Collider", &render_.show_collider);
         if (render_.mode == RenderMode::Smoke) {
             ImGui::SliderFloat("Absorption", &render_.absorption, 0.05f, 2.5f, "%.2f");
         } else {
@@ -287,6 +289,109 @@ namespace app {
             cmd.draw(3, 1, 0, 0);
         }
         cmd.endRendering();
+
+        if (field && (render_.show_bounds || (render_.show_collider && field->collider_enabled))) {
+            if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
+                ImDrawList* draw_list = ImGui::GetForegroundDrawList(viewport);
+                const auto& view_proj = camera_.matrices().view_proj;
+                auto project_point = [&](const vk::math::vec3& point, ImVec2& out) {
+                    const auto clip = vk::math::mul(view_proj, vk::math::vec4{point.x, point.y, point.z, 1.0f});
+                    if (clip.w <= 1.0e-4f) return false;
+                    const float inv_w = 1.0f / clip.w;
+                    const float ndc_x = clip.x * inv_w;
+                    const float ndc_y = clip.y * inv_w;
+                    const float ndc_z = clip.z * inv_w;
+                    if (ndc_z < -0.25f || ndc_z > 1.25f) return false;
+                    out.x = viewport->Pos.x + (ndc_x * 0.5f + 0.5f) * viewport->Size.x;
+                    out.y = viewport->Pos.y + (1.0f - (ndc_y * 0.5f + 0.5f)) * viewport->Size.y;
+                    return true;
+                };
+                auto draw_segment = [&](const vk::math::vec3& a, const vk::math::vec3& b, const ImU32 color, const float thickness) {
+                    ImVec2 screen_a{};
+                    ImVec2 screen_b{};
+                    if (!project_point(a, screen_a)) return;
+                    if (!project_point(b, screen_b)) return;
+                    draw_list->AddLine(screen_a, screen_b, color, thickness);
+                };
+                auto draw_box = [&](const std::array<vk::math::vec3, 8>& corners, const ImU32 color, const float thickness) {
+                    constexpr std::array<std::array<int, 2>, 12> edges{{
+                        {0, 1}, {1, 2}, {2, 3}, {3, 0},
+                        {4, 5}, {5, 6}, {6, 7}, {7, 4},
+                        {0, 4}, {1, 5}, {2, 6}, {3, 7},
+                    }};
+                    for (const auto& edge : edges) draw_segment(corners[static_cast<size_t>(edge[0])], corners[static_cast<size_t>(edge[1])], color, thickness);
+                };
+
+                if (render_.show_bounds) {
+                    const float max_x = static_cast<float>(field->nx) * field->cell_size;
+                    const float max_y = static_cast<float>(field->ny) * field->cell_size;
+                    const float max_z = static_cast<float>(field->nz) * field->cell_size;
+                    const std::array bounds_corners{
+                        vk::math::vec3{0.0f, 0.0f, 0.0f, 0.0f},
+                        vk::math::vec3{max_x, 0.0f, 0.0f, 0.0f},
+                        vk::math::vec3{max_x, max_y, 0.0f, 0.0f},
+                        vk::math::vec3{0.0f, max_y, 0.0f, 0.0f},
+                        vk::math::vec3{0.0f, 0.0f, max_z, 0.0f},
+                        vk::math::vec3{max_x, 0.0f, max_z, 0.0f},
+                        vk::math::vec3{max_x, max_y, max_z, 0.0f},
+                        vk::math::vec3{0.0f, max_y, max_z, 0.0f},
+                    };
+                    draw_box(bounds_corners, IM_COL32(236, 238, 244, 196), 1.6f);
+                }
+
+                if (render_.show_collider && field->collider_enabled) {
+                    if (field->collider_type == 0u) {
+                        constexpr int ring_segments = 48;
+                        constexpr float tau = 6.28318530718f;
+                        const vk::math::vec3 center{field->collider_center_x, field->collider_center_y, field->collider_center_z, 0.0f};
+                        auto draw_ring = [&](const int plane) {
+                            for (int i = 0; i < ring_segments; ++i) {
+                                const float angle_a = tau * static_cast<float>(i) / static_cast<float>(ring_segments);
+                                const float angle_b = tau * static_cast<float>(i + 1) / static_cast<float>(ring_segments);
+                                const float cos_a = std::cos(angle_a);
+                                const float sin_a = std::sin(angle_a);
+                                const float cos_b = std::cos(angle_b);
+                                const float sin_b = std::sin(angle_b);
+                                vk::math::vec3 point_a{};
+                                vk::math::vec3 point_b{};
+                                if (plane == 0) {
+                                    point_a = {center.x + cos_a * field->collider_radius, center.y + sin_a * field->collider_radius, center.z, 0.0f};
+                                    point_b = {center.x + cos_b * field->collider_radius, center.y + sin_b * field->collider_radius, center.z, 0.0f};
+                                } else if (plane == 1) {
+                                    point_a = {center.x + cos_a * field->collider_radius, center.y, center.z + sin_a * field->collider_radius, 0.0f};
+                                    point_b = {center.x + cos_b * field->collider_radius, center.y, center.z + sin_b * field->collider_radius, 0.0f};
+                                } else {
+                                    point_a = {center.x, center.y + cos_a * field->collider_radius, center.z + sin_a * field->collider_radius, 0.0f};
+                                    point_b = {center.x, center.y + cos_b * field->collider_radius, center.z + sin_b * field->collider_radius, 0.0f};
+                                }
+                                draw_segment(point_a, point_b, IM_COL32(255, 176, 92, 224), 2.0f);
+                            }
+                        };
+                        draw_ring(0);
+                        draw_ring(1);
+                        draw_ring(2);
+                    } else {
+                        const float min_x = field->collider_center_x - field->collider_half_x;
+                        const float min_y = field->collider_center_y - field->collider_half_y;
+                        const float min_z = field->collider_center_z - field->collider_half_z;
+                        const float max_x = field->collider_center_x + field->collider_half_x;
+                        const float max_y = field->collider_center_y + field->collider_half_y;
+                        const float max_z = field->collider_center_z + field->collider_half_z;
+                        const std::array collider_corners{
+                            vk::math::vec3{min_x, min_y, min_z, 0.0f},
+                            vk::math::vec3{max_x, min_y, min_z, 0.0f},
+                            vk::math::vec3{max_x, max_y, min_z, 0.0f},
+                            vk::math::vec3{min_x, max_y, min_z, 0.0f},
+                            vk::math::vec3{min_x, min_y, max_z, 0.0f},
+                            vk::math::vec3{max_x, min_y, max_z, 0.0f},
+                            vk::math::vec3{max_x, max_y, max_z, 0.0f},
+                            vk::math::vec3{min_x, max_y, max_z, 0.0f},
+                        };
+                        draw_box(collider_corners, IM_COL32(255, 176, 92, 224), 2.0f);
+                    }
+                }
+            }
+        }
 
         vk::math::mat4 gizmo_c2w{};
         gizmo_c2w.c0 = {camera_.matrices().right.x, camera_.matrices().right.y, camera_.matrices().right.z, 0.0f};

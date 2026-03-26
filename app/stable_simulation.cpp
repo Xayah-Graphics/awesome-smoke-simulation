@@ -21,37 +21,6 @@ namespace smoke {
             throw std::runtime_error(std::string(what) + " failed (" + std::to_string(code) + ")");
         }
 
-        StableFluidsSourceDesc make_source(const Settings& settings, const float source_x, const float color_r, const float color_g, const float color_b) {
-            const auto nx = static_cast<float>(settings.config.nx);
-            const auto ny = static_cast<float>(settings.config.ny);
-            const auto nz = static_cast<float>(settings.config.nz);
-            const float center_x = nx * 0.5f;
-            const float center_y = ny * 0.52f;
-            const float center_z = nz * 0.5f;
-            const float source_y = ny * settings.source_height;
-            const float source_z = nz * settings.source_depth;
-            const float dir_x = center_x - source_x;
-            const float dir_y = center_y - source_y;
-            const float dir_z = center_z - source_z;
-            const float inv_len = 1.0f / (std::sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z) + 1.0e-6f);
-            return StableFluidsSourceDesc{
-                .struct_size = sizeof(StableFluidsSourceDesc),
-                .api_version = STABLE_FLUIDS_API_VERSION,
-                .center_x = source_x,
-                .center_y = source_y,
-                .center_z = source_z,
-                .radius = settings.source_radius,
-                .density_amount = settings.density_amount,
-                .dye_r = settings.dye_amount * color_r,
-                .dye_g = settings.dye_amount * color_g,
-                .dye_b = settings.dye_amount * color_b,
-                .temperature_amount = 0.0f,
-                .velocity_x = dir_x * inv_len * settings.jet_speed,
-                .velocity_y = dir_y * inv_len * settings.jet_speed + settings.upward_bias,
-                .velocity_z = dir_z * inv_len * settings.jet_speed,
-            };
-        }
-
     } // namespace
 
     StableSimulation::StableSimulation() {
@@ -131,9 +100,36 @@ namespace smoke {
 
     void StableSimulation::step(const int sim_steps) {
         const auto nx = static_cast<float>(settings_.config.nx);
+        const auto ny = static_cast<float>(settings_.config.ny);
+        const auto nz = static_cast<float>(settings_.config.nz);
+        const float focus_x = settings_.focus_x * nx;
+        const float focus_y = settings_.focus_y * ny;
+        const float focus_z = settings_.focus_z * nz;
+        const auto make_source = [&](const float source_x, const float source_y, const float source_z, const float color_r, const float color_g, const float color_b) {
+            const float dir_x = focus_x - source_x;
+            const float dir_y = focus_y - source_y;
+            const float dir_z = focus_z - source_z;
+            const float inv_len = 1.0f / (std::sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z) + 1.0e-6f);
+            return StableFluidsSourceDesc{
+                .struct_size = sizeof(StableFluidsSourceDesc),
+                .api_version = STABLE_FLUIDS_API_VERSION,
+                .center_x = source_x,
+                .center_y = source_y,
+                .center_z = source_z,
+                .radius = settings_.source_radius,
+                .density_amount = settings_.density_amount,
+                .dye_r = settings_.dye_amount * color_r,
+                .dye_g = settings_.dye_amount * color_g,
+                .dye_b = settings_.dye_amount * color_b,
+                .temperature_amount = 0.0f,
+                .velocity_x = dir_x * inv_len * settings_.jet_speed,
+                .velocity_y = dir_y * inv_len * settings_.jet_speed + settings_.upward_bias,
+                .velocity_z = dir_z * inv_len * settings_.jet_speed,
+            };
+        };
         const std::array sources{
-            make_source(settings_, nx * settings_.corner_inset, settings_.source_a_r, settings_.source_a_g, settings_.source_a_b),
-            make_source(settings_, nx * (1.0f - settings_.corner_inset), settings_.source_b_r, settings_.source_b_g, settings_.source_b_b),
+            make_source(settings_.source_a_x * nx, settings_.source_a_y * ny, settings_.source_a_z * nz, settings_.source_a_r, settings_.source_a_g, settings_.source_a_b),
+            make_source(settings_.source_b_x * nx, settings_.source_b_y * ny, settings_.source_b_z * nz, settings_.source_b_r, settings_.source_b_g, settings_.source_b_b),
         };
 
         for (int step_index = 0; step_index < sim_steps; ++step_index) {

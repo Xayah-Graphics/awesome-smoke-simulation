@@ -27,9 +27,9 @@ namespace smoke {
         bool enabled          = true;
         int type              = 0;
         float center_x        = 0.50f;
-        float center_y        = 0.36f;
+        float center_y        = 0.50f;
         float center_z        = 0.50f;
-        float radius          = 0.10f;
+        float radius          = 0.125f;
         float half_extent_x   = 0.10f;
         float half_extent_y   = 0.08f;
         float half_extent_z   = 0.10f;
@@ -81,11 +81,17 @@ namespace smoke {
         float source_b_r     = 0.12f;
         float source_b_g     = 0.38f;
         float source_b_b     = 1.00f;
-        float jet_speed      = 48.0f;
-        float upward_bias    = 0.20f;
-        float corner_inset   = 0.14f;
-        float source_height  = 0.10f;
-        float source_depth   = 0.14f;
+        float source_a_x     = 0.16f;
+        float source_a_y     = 0.12f;
+        float source_a_z     = 0.16f;
+        float source_b_x     = 0.84f;
+        float source_b_y     = 0.12f;
+        float source_b_z     = 0.16f;
+        float focus_x        = 0.50f;
+        float focus_y        = 0.50f;
+        float focus_z        = 0.50f;
+        float jet_speed      = 52.0f;
+        float upward_bias    = 0.0f;
         ColliderSettings collider{};
     };
 
