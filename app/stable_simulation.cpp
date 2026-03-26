@@ -1,0 +1,181 @@
+#include "stable_simulation.hpp"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <stdexcept>
+#include <string>
+
+namespace smoke {
+
+    namespace {
+
+        void check_cuda(const cudaError_t status, const char* what) {
+            if (status == cudaSuccess) return;
+            throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(status));
+        }
+
+        void check_stable(const int32_t code, const char* what) {
+            if (code == 0) return;
+            throw std::runtime_error(std::string(what) + " failed (" + std::to_string(code) + ")");
+        }
+
+        StableFluidsSourceDesc make_source(const Settings& settings, const float source_x, const float color_r, const float color_g, const float color_b) {
+            const float nx = static_cast<float>(settings.config.nx);
+            const float ny = static_cast<float>(settings.config.ny);
+            const float nz = static_cast<float>(settings.config.nz);
+            const float center_x = nx * 0.5f;
+            const float center_y = ny * 0.52f;
+            const float center_z = nz * 0.5f;
+            const float source_y = ny * settings.source_height;
+            const float source_z = nz * settings.source_depth;
+            const float dir_x = center_x - source_x;
+            const float dir_y = center_y - source_y;
+            const float dir_z = center_z - source_z;
+            const float inv_len = 1.0f / (std::sqrt(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z) + 1.0e-6f);
+            return StableFluidsSourceDesc{
+                .struct_size = sizeof(StableFluidsSourceDesc),
+                .api_version = STABLE_FLUIDS_API_VERSION,
+                .center_x = source_x,
+                .center_y = source_y,
+                .center_z = source_z,
+                .radius = settings.source_radius,
+                .density_amount = settings.density_amount,
+                .dye_r = settings.dye_amount * color_r,
+                .dye_g = settings.dye_amount * color_g,
+                .dye_b = settings.dye_amount * color_b,
+                .temperature_amount = 0.0f,
+                .velocity_x = dir_x * inv_len * settings.jet_speed,
+                .velocity_y = dir_y * inv_len * settings.jet_speed + settings.upward_bias,
+                .velocity_z = dir_z * inv_len * settings.jet_speed,
+            };
+        }
+
+    } // namespace
+
+    StableSimulation::StableSimulation() {
+        check_cuda(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking), "cudaStreamCreateWithFlags");
+        rebuild();
+    }
+
+    StableSimulation::~StableSimulation() {
+        if (context_ != nullptr) stable_fluids_destroy_context_cuda(context_);
+        if (stream_ != nullptr) cudaStreamDestroy(stream_);
+    }
+
+    Settings& StableSimulation::settings() {
+        return settings_;
+    }
+
+    const Settings& StableSimulation::settings() const {
+        return settings_;
+    }
+
+    const SolverStats& StableSimulation::stats() const {
+        return stats_;
+    }
+
+    cudaStream_t StableSimulation::stream() const {
+        return stream_;
+    }
+
+    void StableSimulation::rebuild() {
+        if (context_ != nullptr) {
+            check_stable(stable_fluids_destroy_context_cuda(context_), "stable_fluids_destroy_context_cuda");
+            context_ = nullptr;
+        }
+
+        StableFluidsContextCreateDesc create_desc{
+            .struct_size = sizeof(StableFluidsContextCreateDesc),
+            .api_version = STABLE_FLUIDS_API_VERSION,
+            .config = settings_.config,
+            .stream = stream_,
+        };
+        check_stable(stable_fluids_create_context_cuda(&create_desc, &context_), "stable_fluids_create_context_cuda");
+        update_scene();
+        stats_ = {};
+    }
+
+    void StableSimulation::update_scene() {
+        StableFluidsSceneDesc scene_desc{
+            .struct_size = sizeof(StableFluidsSceneDesc),
+            .api_version = STABLE_FLUIDS_API_VERSION,
+            .colliders = nullptr,
+            .collider_count = 0,
+        };
+
+        StableFluidsColliderDesc collider{
+            .struct_size = sizeof(StableFluidsColliderDesc),
+            .api_version = STABLE_FLUIDS_API_VERSION,
+            .collider_type = static_cast<uint32_t>(settings_.collider.type == 0 ? STABLE_FLUIDS_COLLIDER_SPHERE : STABLE_FLUIDS_COLLIDER_BOX),
+            .boundary_type = settings_.collider.boundary,
+            .center_x = settings_.collider.center_x * static_cast<float>(settings_.config.nx) * settings_.config.cell_size,
+            .center_y = settings_.collider.center_y * static_cast<float>(settings_.config.ny) * settings_.config.cell_size,
+            .center_z = settings_.collider.center_z * static_cast<float>(settings_.config.nz) * settings_.config.cell_size,
+            .radius = settings_.collider.radius * static_cast<float>((std::max) ({settings_.config.nx, settings_.config.ny, settings_.config.nz})) * settings_.config.cell_size,
+            .half_extent_x = settings_.collider.half_extent_x * static_cast<float>(settings_.config.nx) * settings_.config.cell_size,
+            .half_extent_y = settings_.collider.half_extent_y * static_cast<float>(settings_.config.ny) * settings_.config.cell_size,
+            .half_extent_z = settings_.collider.half_extent_z * static_cast<float>(settings_.config.nz) * settings_.config.cell_size,
+            .linear_velocity_x = settings_.collider.velocity_x,
+            .linear_velocity_y = settings_.collider.velocity_y,
+            .linear_velocity_z = settings_.collider.velocity_z,
+        };
+
+        if (settings_.collider.enabled) {
+            scene_desc.colliders = &collider;
+            scene_desc.collider_count = 1;
+        }
+        check_stable(stable_fluids_update_scene_cuda(context_, &scene_desc), "stable_fluids_update_scene_cuda");
+    }
+
+    void StableSimulation::step(const int sim_steps) {
+        const float nx = static_cast<float>(settings_.config.nx);
+        const std::array sources{
+            make_source(settings_, nx * settings_.corner_inset, settings_.source_a_r, settings_.source_a_g, settings_.source_a_b),
+            make_source(settings_, nx * (1.0f - settings_.corner_inset), settings_.source_b_r, settings_.source_b_g, settings_.source_b_b),
+        };
+
+        for (int step_index = 0; step_index < sim_steps; ++step_index) {
+            StableFluidsStepDesc step_desc{
+                .struct_size = sizeof(StableFluidsStepDesc),
+                .api_version = STABLE_FLUIDS_API_VERSION,
+                .sources = settings_.emit_source ? sources.data() : nullptr,
+                .source_count = settings_.emit_source ? static_cast<uint32_t>(sources.size()) : 0u,
+            };
+            const auto begin = std::chrono::steady_clock::now();
+            check_stable(stable_fluids_step_cuda(context_, &step_desc), "stable_fluids_step_cuda");
+            const auto elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+            stats_.last_step_call_ms = elapsed_ms;
+            ++stats_.step_count;
+            stats_.average_step_call_ms += (elapsed_ms - stats_.average_step_call_ms) / static_cast<double>(stats_.step_count);
+        }
+    }
+
+    void StableSimulation::export_field(const FieldId field, void* destination) {
+        uint32_t export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_DYE_RGBA);
+        if (field == FieldId::Density) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_DENSITY);
+        if (field == FieldId::VelocityMagnitude) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_VELOCITY_MAGNITUDE);
+        if (field == FieldId::SolidMask) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_SOLID_MASK);
+        if (field == FieldId::Pressure) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_PRESSURE);
+        if (field == FieldId::Divergence) export_field = static_cast<uint32_t>(STABLE_FLUIDS_EXPORT_DIVERGENCE);
+
+        StableFluidsExportFieldDesc export_desc{
+            .struct_size = sizeof(StableFluidsExportFieldDesc),
+            .api_version = STABLE_FLUIDS_API_VERSION,
+            .field = export_field,
+            .destination = destination,
+        };
+        check_stable(stable_fluids_export_field_cuda(context_, &export_desc), "stable_fluids_export_field_cuda");
+    }
+
+    StableFluidsGridDesc StableSimulation::grid_desc() const {
+        StableFluidsGridDesc desc{
+            .struct_size = sizeof(StableFluidsGridDesc),
+            .api_version = STABLE_FLUIDS_API_VERSION,
+        };
+        check_stable(stable_fluids_get_grid_desc_cuda(context_, &desc), "stable_fluids_get_grid_desc_cuda");
+        return desc;
+    }
+
+} // namespace smoke
