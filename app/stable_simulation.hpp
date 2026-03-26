@@ -131,6 +131,7 @@ namespace smoke {
         void apply_scene_preset(ScenePreset preset);
         void step(int sim_steps);
         void export_field(FieldId field, void* destination) const;
+        void export_velocity(void* destination) const;
         [[nodiscard]] StableFluidsGridDesc grid_desc() const;
 
     private:

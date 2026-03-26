@@ -159,6 +159,18 @@ namespace app {
         ImGui::SliderFloat("Density Scale", &render_.density_scale, 0.05f, 2.0f, "%.2f");
         ImGui::Checkbox("Show Bounding Box", &render_.show_bounds);
         ImGui::Checkbox("Show Collider", &render_.show_collider);
+        ImGui::Checkbox("Show Velocity Slice", &render_.show_velocity_slice);
+        if (render_.show_velocity_slice) {
+            int slice_axis = static_cast<int>(render_.velocity_slice_axis);
+            const char* axis_labels[] = {"X", "Y", "Z"};
+            if (ImGui::Combo("Slice Axis", &slice_axis, axis_labels, 3)) render_.velocity_slice_axis = static_cast<uint32_t>(slice_axis);
+            ImGui::SliderFloat("Slice Position", &render_.velocity_slice_position, 0.0f, 1.0f, "%.3f");
+            ImGui::SliderInt("Streamer Grid", &render_.velocity_streamer_grid, 4, 48);
+            ImGui::SliderInt("Streamer Steps", &render_.velocity_streamer_steps, 4, 96);
+            ImGui::SliderFloat("Streamer Step", &render_.velocity_streamer_step, 0.10f, 3.0f, "%.2f");
+            ImGui::SliderFloat("Min Speed", &render_.velocity_streamer_min_speed, 0.0f, 2.0f, "%.3f");
+            ImGui::SliderFloat("Streamer Thickness", &render_.velocity_streamer_thickness, 0.5f, 4.0f, "%.2f");
+        }
         if (render_.mode == RenderMode::Smoke) {
             ImGui::SliderFloat("Absorption", &render_.absorption, 0.05f, 2.5f, "%.2f");
         } else {
@@ -290,7 +302,7 @@ namespace app {
         }
         cmd.endRendering();
 
-        if (field && (render_.show_bounds || (render_.show_collider && field->collider_enabled))) {
+        if (field && (render_.show_bounds || (render_.show_collider && field->collider_enabled) || (render_.show_velocity_slice && field->velocity_xyz != nullptr))) {
             if (ImGuiViewport* viewport = ImGui::GetMainViewport()) {
                 ImDrawList* draw_list = ImGui::GetForegroundDrawList(viewport);
                 const auto& view_proj = camera_.matrices().view_proj;
@@ -320,6 +332,46 @@ namespace app {
                         {0, 4}, {1, 5}, {2, 6}, {3, 7},
                     }};
                     for (const auto& edge : edges) draw_segment(corners[static_cast<size_t>(edge[0])], corners[static_cast<size_t>(edge[1])], color, thickness);
+                };
+                auto sample_velocity = [&](const float px, const float py, const float pz) {
+                    const auto nx = static_cast<int>(field->nx);
+                    const auto ny = static_cast<int>(field->ny);
+                    const auto nz = static_cast<int>(field->nz);
+                    const float inv_h = 1.0f / field->cell_size;
+                    const float gx = std::clamp(px * inv_h - 0.5f, 0.0f, static_cast<float>(nx - 1));
+                    const float gy = std::clamp(py * inv_h - 0.5f, 0.0f, static_cast<float>(ny - 1));
+                    const float gz = std::clamp(pz * inv_h - 0.5f, 0.0f, static_cast<float>(nz - 1));
+                    const int x0 = static_cast<int>(std::floor(gx));
+                    const int y0 = static_cast<int>(std::floor(gy));
+                    const int z0 = static_cast<int>(std::floor(gz));
+                    const int x1 = (std::min)(x0 + 1, nx - 1);
+                    const int y1 = (std::min)(y0 + 1, ny - 1);
+                    const int z1 = (std::min)(z0 + 1, nz - 1);
+                    const float tx = gx - static_cast<float>(x0);
+                    const float ty = gy - static_cast<float>(y0);
+                    const float tz = gz - static_cast<float>(z0);
+                    const auto load = [&](const int x, const int y, const int z) {
+                        const auto index = static_cast<size_t>(x) + static_cast<size_t>(nx) * (static_cast<size_t>(y) + static_cast<size_t>(ny) * static_cast<size_t>(z));
+                        return vk::math::vec3{
+                            field->velocity_xyz[index * 3ull + 0ull],
+                            field->velocity_xyz[index * 3ull + 1ull],
+                            field->velocity_xyz[index * 3ull + 2ull],
+                            0.0f,
+                        };
+                    };
+                    const auto lerp3 = [&](const vk::math::vec3& a, const vk::math::vec3& b, const float t) {
+                        return vk::math::vec3{
+                            std::lerp(a.x, b.x, t),
+                            std::lerp(a.y, b.y, t),
+                            std::lerp(a.z, b.z, t),
+                            0.0f,
+                        };
+                    };
+                    const auto c00 = lerp3(load(x0, y0, z0), load(x1, y0, z0), tx);
+                    const auto c10 = lerp3(load(x0, y1, z0), load(x1, y1, z0), tx);
+                    const auto c01 = lerp3(load(x0, y0, z1), load(x1, y0, z1), tx);
+                    const auto c11 = lerp3(load(x0, y1, z1), load(x1, y1, z1), tx);
+                    return lerp3(lerp3(c00, c10, ty), lerp3(c01, c11, ty), tz);
                 };
 
                 if (render_.show_bounds) {
@@ -388,6 +440,91 @@ namespace app {
                             vk::math::vec3{min_x, max_y, max_z, 0.0f},
                         };
                         draw_box(collider_corners, IM_COL32(255, 176, 92, 224), 2.0f);
+                    }
+                }
+
+                if (render_.show_velocity_slice && field->velocity_xyz != nullptr) {
+                    const float max_x = static_cast<float>(field->nx) * field->cell_size;
+                    const float max_y = static_cast<float>(field->ny) * field->cell_size;
+                    const float max_z = static_cast<float>(field->nz) * field->cell_size;
+                    const uint32_t slice_axis = (std::min)(render_.velocity_slice_axis, 2u);
+                    const float slice_pos = std::clamp(render_.velocity_slice_position, 0.0f, 1.0f);
+                    const int seed_count = (std::max)(render_.velocity_streamer_grid, 2);
+                    const int step_count = (std::max)(render_.velocity_streamer_steps, 1);
+                    const float step_scale = render_.velocity_streamer_step * field->cell_size;
+                    const float min_speed = render_.velocity_streamer_min_speed;
+                    const float thickness = render_.velocity_streamer_thickness;
+                    std::array<vk::math::vec3, 4> slice_corners{};
+                    if (slice_axis == 0u) {
+                        const float x = slice_pos * max_x;
+                        slice_corners = {
+                            vk::math::vec3{x, 0.0f, 0.0f, 0.0f},
+                            vk::math::vec3{x, max_y, 0.0f, 0.0f},
+                            vk::math::vec3{x, max_y, max_z, 0.0f},
+                            vk::math::vec3{x, 0.0f, max_z, 0.0f},
+                        };
+                    } else if (slice_axis == 1u) {
+                        const float y = slice_pos * max_y;
+                        slice_corners = {
+                            vk::math::vec3{0.0f, y, 0.0f, 0.0f},
+                            vk::math::vec3{max_x, y, 0.0f, 0.0f},
+                            vk::math::vec3{max_x, y, max_z, 0.0f},
+                            vk::math::vec3{0.0f, y, max_z, 0.0f},
+                        };
+                    } else {
+                        const float z = slice_pos * max_z;
+                        slice_corners = {
+                            vk::math::vec3{0.0f, 0.0f, z, 0.0f},
+                            vk::math::vec3{max_x, 0.0f, z, 0.0f},
+                            vk::math::vec3{max_x, max_y, z, 0.0f},
+                            vk::math::vec3{0.0f, max_y, z, 0.0f},
+                        };
+                    }
+                    draw_segment(slice_corners[0], slice_corners[1], IM_COL32(112, 220, 255, 120), 1.0f);
+                    draw_segment(slice_corners[1], slice_corners[2], IM_COL32(112, 220, 255, 120), 1.0f);
+                    draw_segment(slice_corners[2], slice_corners[3], IM_COL32(112, 220, 255, 120), 1.0f);
+                    draw_segment(slice_corners[3], slice_corners[0], IM_COL32(112, 220, 255, 120), 1.0f);
+
+                    for (int j = 0; j < seed_count; ++j) {
+                        for (int i = 0; i < seed_count; ++i) {
+                            const float u = (static_cast<float>(i) + 0.5f) / static_cast<float>(seed_count);
+                            const float v = (static_cast<float>(j) + 0.5f) / static_cast<float>(seed_count);
+                            vk::math::vec3 pos{};
+                            if (slice_axis == 0u) pos = {slice_pos * max_x, u * max_y, v * max_z, 0.0f};
+                            if (slice_axis == 1u) pos = {u * max_x, slice_pos * max_y, v * max_z, 0.0f};
+                            if (slice_axis == 2u) pos = {u * max_x, v * max_y, slice_pos * max_z, 0.0f};
+                            for (int step = 0; step < step_count; ++step) {
+                                const auto velocity = sample_velocity(pos.x, pos.y, pos.z);
+                                vk::math::vec3 plane_velocity{};
+                                if (slice_axis == 0u) plane_velocity = {0.0f, velocity.y, velocity.z, 0.0f};
+                                if (slice_axis == 1u) plane_velocity = {velocity.x, 0.0f, velocity.z, 0.0f};
+                                if (slice_axis == 2u) plane_velocity = {velocity.x, velocity.y, 0.0f, 0.0f};
+                                const float speed = std::sqrt(plane_velocity.x * plane_velocity.x + plane_velocity.y * plane_velocity.y + plane_velocity.z * plane_velocity.z);
+                                if (speed < min_speed) break;
+                                const float inv_speed = 1.0f / speed;
+                                vk::math::vec3 next{
+                                    pos.x + plane_velocity.x * inv_speed * step_scale,
+                                    pos.y + plane_velocity.y * inv_speed * step_scale,
+                                    pos.z + plane_velocity.z * inv_speed * step_scale,
+                                    0.0f,
+                                };
+                                next.x = std::clamp(next.x, 0.0f, max_x);
+                                next.y = std::clamp(next.y, 0.0f, max_y);
+                                next.z = std::clamp(next.z, 0.0f, max_z);
+                                if (slice_axis == 0u) next.x = pos.x;
+                                if (slice_axis == 1u) next.y = pos.y;
+                                if (slice_axis == 2u) next.z = pos.z;
+                                const float speed_t = std::clamp(speed / ((std::max)(min_speed, 1.0e-4f) * 8.0f), 0.0f, 1.0f);
+                                const ImU32 color = IM_COL32(
+                                    static_cast<int>(std::lerp(72.0f, 255.0f, speed_t)),
+                                    static_cast<int>(std::lerp(196.0f, 212.0f, speed_t)),
+                                    static_cast<int>(std::lerp(255.0f, 96.0f, speed_t)),
+                                    static_cast<int>(std::lerp(112.0f, 224.0f, speed_t))
+                                );
+                                draw_segment(pos, next, color, thickness);
+                                pos = next;
+                            }
+                        }
                     }
                 }
             }

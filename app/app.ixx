@@ -58,6 +58,14 @@ export namespace app {
         float absorption      = 1.20f;
         bool show_bounds      = true;
         bool show_collider    = true;
+        bool show_velocity_slice = false;
+        uint32_t velocity_slice_axis = 2;
+        float velocity_slice_position = 0.5f;
+        int velocity_streamer_grid = 18;
+        int velocity_streamer_steps = 28;
+        float velocity_streamer_step = 0.85f;
+        float velocity_streamer_min_speed = 0.04f;
+        float velocity_streamer_thickness = 1.6f;
         float scalar_min      = 0.0f;
         float scalar_max      = 1.0f;
         float scalar_opacity  = 2.0f;
@@ -93,6 +101,7 @@ export namespace app {
         float collider_half_x     = 0.0f;
         float collider_half_y     = 0.0f;
         float collider_half_z     = 0.0f;
+        const float* velocity_xyz = nullptr;
     };
 
     class FieldRendererApp {

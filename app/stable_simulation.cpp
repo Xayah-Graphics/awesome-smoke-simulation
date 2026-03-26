@@ -342,6 +342,10 @@ namespace smoke {
         check_stable(stable_fluids_export_divergence_cuda(context_, destination), "stable_fluids_export_divergence_cuda");
     }
 
+    void StableSimulation::export_velocity(void* destination) const {
+        check_stable(stable_fluids_export_velocity_cuda(context_, destination), "stable_fluids_export_velocity_cuda");
+    }
+
     StableFluidsGridDesc StableSimulation::grid_desc() const {
         StableFluidsGridDesc desc{};
         check_stable(stable_fluids_get_grid_desc_cuda(context_, &desc), "stable_fluids_get_grid_desc_cuda");

@@ -61,6 +61,7 @@ namespace {
 
     struct ViewerRuntime {
         uint64_t field_bytes          = 0;
+        uint64_t velocity_bytes       = 0;
         uint64_t snapshot_generation  = 0;
         uint64_t submit_serial        = 0;
         uint32_t steps_since_snapshot = 0;
@@ -78,6 +79,8 @@ namespace {
         cudaExternalMemory_t external_memory       = nullptr;
         cudaExternalSemaphore_t external_semaphore = nullptr;
         void* cuda_ptr                             = nullptr;
+        void* cuda_velocity_ptr                    = nullptr;
+        std::vector<float> velocity_host{};
         uint64_t ready_generation                  = 0;
         uint64_t last_used_submit_serial           = 0;
         uint32_t nx                                = 0;
@@ -181,18 +184,21 @@ int main() {
                 .collider_half_x = settings.collider.half_extent_x * nx,
                 .collider_half_y = settings.collider.half_extent_y * ny,
                 .collider_half_z = settings.collider.half_extent_z * nz,
+                .velocity_xyz = slot.velocity_host.empty() ? nullptr : slot.velocity_host.data(),
             };
         };
 
         auto destroy_snapshot_slots = [&]() {
             for (auto& slot : snapshot_slots) {
                 if (slot.cuda_ptr != nullptr) cudaFree(slot.cuda_ptr);
+                if (slot.cuda_velocity_ptr != nullptr) cudaFree(slot.cuda_velocity_ptr);
                 if (slot.external_semaphore != nullptr) cudaDestroyExternalSemaphore(slot.external_semaphore);
                 if (slot.external_memory != nullptr) cudaDestroyExternalMemory(slot.external_memory);
                 slot = {};
             }
             snapshot_slots.clear();
             viewer_runtime.field_bytes = 0;
+            viewer_runtime.velocity_bytes = 0;
             viewer_runtime.snapshot_generation = 0;
             viewer_runtime.submit_serial = 0;
             viewer_runtime.steps_since_snapshot = 0;
@@ -306,6 +312,8 @@ int main() {
                     .size = viewer_runtime.field_bytes,
                 };
                 if (cudaExternalMemoryGetMappedBuffer(&slot.cuda_ptr, slot.external_memory, &buffer_desc) != cudaSuccess) throw std::runtime_error("cudaExternalMemoryGetMappedBuffer failed");
+                if (cudaMalloc(&slot.cuda_velocity_ptr, viewer_runtime.velocity_bytes) != cudaSuccess) throw std::runtime_error("cudaMalloc velocity snapshot failed");
+                slot.velocity_host.resize(static_cast<size_t>(viewer_runtime.velocity_bytes / sizeof(float)));
 
                 vk::DescriptorBufferInfo field_info{
                     .buffer = *slot.buffer,
@@ -341,6 +349,8 @@ int main() {
             const auto grid = simulation.grid_desc();
             const auto& field = current_field();
             simulation.export_field(field.id, slot.cuda_ptr);
+            simulation.export_velocity(slot.cuda_velocity_ptr);
+            if (cudaMemcpyAsync(slot.velocity_host.data(), slot.cuda_velocity_ptr, viewer_runtime.velocity_bytes, cudaMemcpyDeviceToHost, simulation.stream()) != cudaSuccess) throw std::runtime_error("cudaMemcpyAsync velocity snapshot failed");
             cudaExternalSemaphoreSignalParams signal_params{};
             const uint64_t next_generation = viewer_runtime.snapshot_generation + 1;
             signal_params.params.fence.value = next_generation;
@@ -373,7 +383,9 @@ int main() {
             simulation.rebuild();
             if (simulation.settings().emit_source) simulation.step(1);
             destroy_snapshot_slots();
-            viewer_runtime.field_bytes = rgba_bytes(simulation.grid_desc());
+            const auto grid = simulation.grid_desc();
+            viewer_runtime.field_bytes = rgba_bytes(grid);
+            viewer_runtime.velocity_bytes = static_cast<uint64_t>(grid.nx) * static_cast<uint64_t>(grid.ny) * static_cast<uint64_t>(grid.nz) * sizeof(float) * 3ull;
             create_snapshot_slots();
             snapshot_current_field_to_slot(0, "smoke_app.reset_backend.initial_snapshot");
             apply_field_defaults(current_field());
