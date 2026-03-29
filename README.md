@@ -1,6 +1,7 @@
 # Awesome Smoke Simulation
 
 [![Arch Build](https://github.com/Xayah-Graphics/awesome-smoke-simulation/actions/workflows/arch-build.yml/badge.svg)](https://github.com/Xayah-Graphics/awesome-smoke-simulation/actions/workflows/arch-build.yml)
+[![Windows Build](https://github.com/Xayah-Graphics/awesome-smoke-simulation/actions/workflows/windows-build.yml/badge.svg)](https://github.com/Xayah-Graphics/awesome-smoke-simulation/actions/workflows/windows-build.yml)
 
 #### Classic Eulerian Simulation.
 
