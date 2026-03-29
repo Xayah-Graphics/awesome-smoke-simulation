@@ -1,6 +1,3 @@
-[submodule "app/vulkan-visualizer"]
-	path = app/vulkan-visualizer
-	url = https://github.com/vulkan-visualizer/vulkan-visualizer
 [submodule "001-stable-fluids"]
 	path = 001-stable-fluids
 	url = https://github.com/Xayah-Graphics/stable-fluids.git

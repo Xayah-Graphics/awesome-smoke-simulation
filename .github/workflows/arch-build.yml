@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  arch-build-and-benchmark:
     name: Build (Arch Linux, CMake+Ninja)
     runs-on: ubuntu-latest
 
@@ -86,20 +86,19 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
 
       - name: Configure
         shell: bash
         run: |
           set -euxo pipefail
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DSMOKE_BUILD_BENCHMARK=ON \
+            -DSMOKE_BUILD_VULKAN_APP=ON
 
       - name: Build
         shell: bash
         run: |
           set -euxo pipefail
-          cmake --build build --parallel
+          cmake --build build --target all --parallel
 

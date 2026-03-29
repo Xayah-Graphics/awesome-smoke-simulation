@@ -1,0 +1,73 @@
+name: Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '**'
+  pull_request:
+    paths:
+      - '**'
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-build:
+    name: Build (Windows, CMake+Ninja)
+    runs-on: windows-latest
+
+    env:
+      CMAKE_BUILD_TYPE: Release
+
+    steps:
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install CMake
+        uses: ssrobins/install-cmake@v1
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.34
+        with:
+          cuda: "13.2.0"
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.4.0
+        with:
+          version: latest
+          components: Vulkan-Headers,Vulkan-Loader,Glslang
+          cache: true
+
+      - name: Toolchain sanity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cl /Bv
+          cmake --version
+          ninja --version
+          if (-not $env:CUDA_PATH) { throw "CUDA_PATH is not set" }
+          Get-Command nvcc | Select-Object -ExpandProperty Source
+          nvcc --version
+          Get-Command glslangValidator | Select-Object -ExpandProperty Source
+          glslangValidator --version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE="$env:CMAKE_BUILD_TYPE" `
+            -DCUDAToolkit_ROOT="$env:CUDA_PATH" `
+            -DSMOKE_BUILD_BENCHMARK=ON `
+            -DSMOKE_BUILD_VULKAN_APP=ON
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --build build --target all --parallel
