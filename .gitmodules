@@ -4,3 +4,6 @@
 [submodule "002-visual-simulation-of-smoke"]
 	path = 002-visual-simulation-of-smoke
 	url = https://github.com/Xayah-Graphics/visual-simulation-of-smoke.git
+[submodule "101-smoke-simulation-for-large-scale-phenomena"]
+	path = 101-smoke-simulation-for-large-scale-phenomena
+	url = https://github.com/Xayah-Graphics/smoke-simulation-for-large-scale-phenomena.git
